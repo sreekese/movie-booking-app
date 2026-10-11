@@ -59,3 +59,9 @@ coverage/
 
 # Optional: local certificates
 *.pem
+# Persistent runtime data
+server/data/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+!.env.example

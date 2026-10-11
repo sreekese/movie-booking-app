@@ -1,40 +1,155 @@
-
-import Navbar from './components/Navbar'
-import { Route, Routes, useLocation } from 'react-router-dom'
-import Home from './pages/Home'
-import Movies from './pages/Movies'
-import MovieDetails from './pages/MovieDetails'
-import SeatLayout from './pages/SeatLayout'
-import MyBookings from './pages/MyBookings'
-import FavouriteMovies from './pages/FavouriteMovies'
-import { Toaster } from 'react-hot-toast'
-import Footer from './components/Footer'
-import About from './pages/About'
-import Vision from './pages/Vision'
-
-const App = () => {
-
-  const isAdminRoute = useLocation().pathname.startsWith('/admin')
-
-
-  return (
-    <>
-    <Toaster/>
-    {!isAdminRoute && <Navbar/>}
-    <Routes>
-      <Route path='/' element={<Home/>}/>
-      <Route path='/movies' element={<Movies/>}/>
-      <Route path='/movies/:id' element={<MovieDetails/>}/>
-      <Route path='/movies/:id/:date' element={<SeatLayout/>}/>
-      <Route path='/my-bookings' element={<MyBookings/>}/>
-      <Route path='/favourite' element={<FavouriteMovies/>}/>
-      <Route path='/about' element={<About/>}>
-        <Route path='vision' element={<Vision/>}/>
-      </Route>
-    </Routes>
-    {!isAdminRoute && <Footer/>}
-    </>
-  )
+import { Component, useEffect } from 'react';
+import { Link, Navigate, Route, Routes, useLocation } from 'react-router-dom';
+import { Toaster } from 'react-hot-toast';
+import Provider from './Provider';
+import { useApp } from './context';
+import Navbar from './components/Navbar';
+import Footer from './components/Footer';
+import Home from './pages/Home';
+import Movies from './pages/Movies';
+import MovieDetails from './pages/MovieDetails';
+import SeatLayout from './pages/SeatLayout';
+import MyBookings from './pages/MyBookings';
+import FavouriteMovies from './pages/FavouriteMovies';
+import Auth from './pages/Auth';
+import Admin from './pages/Admin';
+import Info from './pages/Info';
+class ErrorBoundary extends Component {
+  state = { failed: false };
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+  render() {
+    return this.state.failed ? (
+      <div className="container page empty">
+        <h1>Something went wrong</h1>
+        <p>Please reload the application.</p>
+        <button className="button" onClick={() => window.location.reload()}>
+          Reload
+        </button>
+      </div>
+    ) : (
+      this.props.children
+    );
+  }
 }
-
-export default App
+function Protected({ children, admin = false }) {
+  const { user, ready } = useApp();
+  const location = useLocation();
+  if (!ready)
+    return (
+      <div className="container page" role="status">
+        Loading your account…
+      </div>
+    );
+  if (!user)
+    return (
+      <Navigate
+        to="/login"
+        state={{ from: location.pathname + location.search }}
+        replace
+      />
+    );
+  if (admin && user.role !== 'admin')
+    return (
+      <div className="container page empty">
+        <h1>Administrator access required</h1>
+        <Link className="button" to="/">
+          Back home
+        </Link>
+      </div>
+    );
+  return children;
+}
+function RouteEffects() {
+  const { pathname } = useLocation();
+  useEffect(() => {
+    window.scrollTo(0, 0);
+    document.title = `${pathname === '/' ? 'Movie nights, made easy' : pathname.startsWith('/movies') ? 'Movies & screenings' : pathname === '/my-bookings' ? 'My reservations' : pathname === '/favourite' ? 'Favourites' : pathname === '/admin' ? 'Administration' : 'Welcome'} | Quick Show`;
+    document.getElementById('main-content')?.focus({ preventScroll: true });
+  }, [pathname]);
+  return null;
+}
+export default function App() {
+  const location = useLocation();
+  return (
+    <ErrorBoundary>
+      <Provider>
+        <Toaster
+          position="bottom-right"
+          toastOptions={{ style: { background: '#1b2332', color: '#fff' } }}
+        />
+        <a className="skip-link" href="#main-content">
+          Skip to content
+        </a>
+        <Navbar />
+        <RouteEffects />
+        <main id="main-content" tabIndex={-1}>
+          <Routes key={location.pathname}>
+            <Route path="/" element={<Home />} />
+            <Route path="/movies" element={<Movies />} />
+            <Route path="/movies/:id" element={<MovieDetails />} />
+            <Route
+              path="/movies/:id/:date"
+              element={
+                <Protected>
+                  <SeatLayout />
+                </Protected>
+              }
+            />
+            <Route
+              path="/my-bookings"
+              element={
+                <Protected>
+                  <MyBookings />
+                </Protected>
+              }
+            />
+            <Route
+              path="/favourite"
+              element={
+                <Protected>
+                  <FavouriteMovies />
+                </Protected>
+              }
+            />
+            <Route path="/login" element={<Auth />} />
+            <Route
+              path="/admin"
+              element={
+                <Protected admin>
+                  <Admin />
+                </Protected>
+              }
+            />
+            {['about', 'theater', 'contact', 'privacy', 'terms'].map((type) => (
+              <Route
+                path={`/${type}`}
+                key={type}
+                element={<Info type={type} />}
+              />
+            ))}
+            <Route
+              path="/about/vision"
+              element={<Navigate to="/about" replace />}
+            />
+            <Route
+              path="*"
+              element={
+                <section className="container page empty">
+                  <p className="eyebrow accent">404 / WRONG SCREEN</p>
+                  <h1>This page isn’t showing.</h1>
+                  <p>Let’s find you something good to watch.</p>
+                  <Link className="button" to="/movies">
+                    Browse movies
+                  </Link>
+                </section>
+              }
+            />
+          </Routes>
+        </main>
+        <Footer />
+      </Provider>
+    </ErrorBoundary>
+  );
+}

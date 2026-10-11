@@ -1,22 +1,91 @@
-import Blurcircle from "../components/Blurcircle"
-import MovieCard from "../components/MovieCard"
-import movies from "../data/data"
-
-const Movies = () => {
-  return movies.length > 0 ? (
-    <div className="relative my-40 mb-60 px-6 md:px-16 lg:px-40 xl:px-44 overflow-hidden min-h-[80vh]">
-        <Blurcircle top='150px' left='0'/>
-        <Blurcircle bottom='50px' right='50px'/>
-        <h1 className="text-lg font-medium my-4">Now Showing</h1>
-        <div>
-          <MovieCard/>
+import { useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { Search } from 'lucide-react';
+import movies from '../data/data';
+import MovieCard from '../components/MovieCard';
+export default function Movies() {
+  const [params, setParams] = useSearchParams();
+  const query = params.get('q') || '';
+  const [genre, setGenre] = useState('All');
+  const [sort, setSort] = useState('rating');
+  const filtered = movies
+    .filter(
+      (m) =>
+        m.title.toLowerCase().includes(query.toLowerCase()) &&
+        (genre === 'All' || m.genre.includes(genre)),
+    )
+    .sort((a, b) =>
+      sort === 'title'
+        ? a.title.localeCompare(b.title)
+        : sort === 'price'
+          ? a.price - b.price
+          : b.rating - a.rating,
+    );
+  return (
+    <section className="container page">
+      <p className="eyebrow accent">FIND YOUR NEXT FAVOURITE</p>
+      <h1>On the big screen</h1>
+      <p className="muted">
+        A handpicked collection of stories worth watching again.
+      </p>
+      <div className="filters">
+        <label className="search-field">
+          <Search size={20} />
+          <input
+            aria-label="Search movies"
+            placeholder="Search for a movie…"
+            value={query}
+            onChange={(e) =>
+              setParams(e.target.value ? { q: e.target.value } : {}, {
+                replace: true,
+              })
+            }
+          />
+        </label>
+        <label>
+          Sort by
+          <select value={sort} onChange={(e) => setSort(e.target.value)}>
+            <option value="rating">Highest rated</option>
+            <option value="price">Lowest price</option>
+            <option value="title">Title A–Z</option>
+          </select>
+        </label>
+      </div>
+      <div className="chips" aria-label="Filter by genre">
+        {['All', ...new Set(movies.flatMap((m) => m.genre))].map((g) => (
+          <button
+            key={g}
+            className={genre === g ? 'chip selected' : 'chip'}
+            aria-pressed={genre === g}
+            onClick={() => setGenre(g)}
+          >
+            {g}
+          </button>
+        ))}
+      </div>
+      <p className="muted result-count" role="status">
+        {filtered.length} movies
+      </p>
+      <div className="movie-grid">
+        {filtered.map((movie) => (
+          <MovieCard key={movie.id} movie={movie} />
+        ))}
+      </div>
+      {!filtered.length && (
+        <div className="empty">
+          <h2>No matching movies</h2>
+          <p>Try another title or genre.</p>
+          <button
+            className="button"
+            onClick={() => {
+              setParams({});
+              setGenre('All');
+            }}
+          >
+            Clear filters
+          </button>
         </div>
-    </div>
-  ) : (
-    <div className="flex flex-col items-center justify-center h-screen">
-      <h1 className="text-3xl font-bold text-center">No Movies Available</h1>
-    </div>
-  )
+      )}
+    </section>
+  );
 }
-
-export default Movies
