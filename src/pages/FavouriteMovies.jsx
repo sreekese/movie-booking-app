@@ -1,23 +1,29 @@
-import Blurcircle from "../components/Blurcircle"
-import MovieCard from "../components/MovieCard"
-import movies from "../data/data"
-
-const FavouriteMovies = () => {
-
-  return movies.length > 0 ? (
-    <div className="relative my-40 mb-60 px-6 md:px-16 lg:px-40 xl:px-44 overflow-hidden min-h-[80vh]">
-        <Blurcircle top='150px' left='0'/>
-        <Blurcircle bottom='50px' right='50px'/>
-        <h1 className="text-lg font-medium my-4">Your Favourite Movies</h1>
-        <div>
-          <MovieCard/>
+import { Link } from 'react-router-dom';
+import { useApp } from '../context';
+import movies from '../data/data';
+import MovieCard from '../components/MovieCard';
+export default function FavouriteMovies() {
+  const { favourites } = useApp();
+  return (
+    <section className="container page">
+      <p className="eyebrow accent">YOUR PERSONAL SHORTLIST</p>
+      <h1>Saved for movie night</h1>
+      <div className="movie-grid">
+        {movies
+          .filter((m) => favourites.includes(m.id))
+          .map((movie) => (
+            <MovieCard key={movie.id} movie={movie} />
+          ))}
+      </div>
+      {!favourites.length && (
+        <div className="empty">
+          <h2>Your favourites start here</h2>
+          <p>Tap the heart on a movie to keep it close.</p>
+          <Link className="button" to="/movies">
+            Discover movies
+          </Link>
         </div>
-    </div>
-  ) : (
-    <div className="flex flex-col items-center justify-center h-screen">
-      <h1 className="text-3xl font-bold text-center">No Movies Available</h1>
-    </div>
-  )
+      )}
+    </section>
+  );
 }
-
-export default FavouriteMovies

@@ -1,33 +1,76 @@
-import { MenuIcon, SearchIcon, XIcon } from "lucide-react";
-import {useState} from "react";
-import { Link } from "react-router-dom";
-
-const Navbar = () => {
-
-    const [isOpen,setIsOpen] = useState(false);
-
+import { useState } from 'react';
+import { Link, NavLink, useNavigate } from 'react-router-dom';
+import { Menu, X, Clapperboard } from 'lucide-react';
+import toast from 'react-hot-toast';
+import { useApp } from '../context';
+export default function Navbar() {
+  const [open, setOpen] = useState(false);
+  const { user, logout } = useApp();
+  const navigate = useNavigate();
   return (
-    <div className="fixed top-0 left-0 z-50 w-full flex items-center justify-between px-6 md:px-16 lg:px-36 py-5">
-        <Link to='/' className="max-md:flex-1">
-        <img src= "https://static.vecteezy.com/system/resources/previews/019/637/249/non_2x/abstract-circle-logo-icon-free-png.png"  alt="logo" className="w-24 h-auto"/></Link>
-        <div className={`max-md:absolute max-md:top-0 max-md:left-0 max-md:font-medium max-md:text-lg z-50 flex flex-col md:flex-row items-center max-md:justify-center gap-8 min-md:px-8 py-3 max-md:h-screen min-md:rounded-full backdrop-blur bg-black/70 md:bg-white/10 md:border border-gray-300/20 overflow-hidden transistion-[width] duration-300 ${isOpen ? 'max-md:w-full' : 'max-md:w-0'} `} >
-        <XIcon className="md:hidden absolute top-6 right-6 w-6 h-6 cursor-pointer" onClick={() => setIsOpen(!isOpen)}/>
-
-            <Link onClick={() => {scrollTo(0,0);setIsOpen(false)}} to='/'>Home</Link>
-            <Link onClick={() => {scrollTo(0,0);setIsOpen(false)}} to='/movies'>Movies</Link>
-            <Link onClick={() => {scrollTo(0,0);setIsOpen(false)}} to='/theater'>Theater</Link>
-            <Link onClick={() => {scrollTo(0,0);setIsOpen(false)}} to='/about'>About</Link>
-            <Link onClick={() => {scrollTo(0,0);setIsOpen(false)}} to='/favourite'>FavouriteMovies</Link>
-        </div>
-
-        <div className="flex items-center gap-8">
-            <SearchIcon className="max-md:hidden w-6 h-6 cursor-pointer"/>
-            <button className="px-4 py-1 sm:px-7 sm:py-2 bg-primary hover:bg-primary-dull transition rounded-full font-medium cursor-pointer">Login</button>
-        </div>
-
-        <MenuIcon className="max-md:ml-4 md:hidden w-8 h-8 cursor-pointer" onClick={() => setIsOpen(!isOpen)}/>
-    </div>
+    <header className="site-header">
+      <Link to="/" className="brand" onClick={() => setOpen(false)}>
+        <Clapperboard />
+        <span>
+          quick<span>show</span>
+          <small>MAKE IT A MOVIE NIGHT</small>
+        </span>
+      </Link>
+      <button
+        className="menu-toggle icon-button"
+        aria-label="Toggle navigation"
+        aria-expanded={open}
+        aria-controls="main-nav"
+        onClick={() => setOpen(!open)}
+      >
+        {open ? <X /> : <Menu />}
+      </button>
+      <nav
+        id="main-nav"
+        className={open ? 'open' : ''}
+        aria-label="Main navigation"
+      >
+        {[
+          ['/', 'Home'],
+          ['/movies', 'Movies'],
+          ['/theater', 'Cinema'],
+          ['/favourite', 'Favourites'],
+          ['/my-bookings', 'My bookings'],
+        ].map(([to, label]) => (
+          <NavLink key={to} to={to} end onClick={() => setOpen(false)}>
+            {label}
+          </NavLink>
+        ))}
+        {user?.role === 'admin' && (
+          <NavLink to="/admin" onClick={() => setOpen(false)}>
+            Admin
+          </NavLink>
+        )}
+        {user ? (
+          <button
+            className="button small secondary"
+            onClick={async () => {
+              try {
+                await logout();
+                setOpen(false);
+                navigate('/');
+              } catch (e) {
+                toast.error(e.message);
+              }
+            }}
+          >
+            Sign out
+          </button>
+        ) : (
+          <Link
+            className="button small"
+            to="/login"
+            onClick={() => setOpen(false)}
+          >
+            Sign in ↗
+          </Link>
+        )}
+      </nav>
+    </header>
   );
-};
-
-export default Navbar;
+}
