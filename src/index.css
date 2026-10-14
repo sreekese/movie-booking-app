@@ -1170,3 +1170,347 @@ td small {
     min-height: 0;
   }
 }
+
+/* Shared skeletons reserve space while the real request or image is pending. */
+.shimmer {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+  background: #202a3a;
+  border-radius: 7px;
+}
+.shimmer::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    100deg,
+    transparent 15%,
+    #d5e4ff12 45%,
+    #d5e4ff24 50%,
+    #d5e4ff12 55%,
+    transparent 85%
+  );
+  transform: translateX(-100%);
+  animation: shimmer-sweep 1.65s ease-in-out infinite;
+}
+@keyframes shimmer-sweep {
+  to {
+    transform: translateX(100%);
+  }
+}
+.skeleton-line {
+  height: 15px;
+  width: 90%;
+  margin: 16px 0;
+}
+.skeleton-line.short {
+  width: 55%;
+}
+.skeleton-heading {
+  width: min(420px, 85%);
+  height: 38px;
+  margin: 18px 0 24px;
+}
+.skeleton-button {
+  width: 100px;
+  height: 40px;
+}
+.skeleton-show {
+  width: 138px;
+  height: 70px;
+}
+.skeleton-poster {
+  aspect-ratio: 2/3;
+  border-radius: 12px;
+}
+.skeleton-ticket-poster {
+  width: 140px;
+  height: 210px;
+  flex-shrink: 0;
+}
+.skeleton-summary {
+  height: 160px;
+  margin: 25px 0;
+}
+.skeleton-screen {
+  width: 75%;
+  height: 12px;
+  margin: 20px auto 48px;
+}
+.skeleton-seats {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: 10px 6px;
+  margin-bottom: 30px;
+}
+.skeleton-seat {
+  height: 28px;
+  border-radius: 6px 6px 2px 2px;
+}
+.skeleton-table-row {
+  height: 44px;
+  margin-bottom: 14px;
+}
+.poster-image {
+  display: block;
+  position: relative;
+  overflow: hidden;
+  background: #202738;
+}
+.poster-link > .poster-image {
+  width: 100%;
+  height: 100%;
+}
+.poster-image img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.poster-image .poster-hidden {
+  opacity: 0;
+}
+.poster-shimmer {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+}
+.poster-image-fallback {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  text-align: center;
+  padding: 16px;
+  color: #a6acba;
+}
+@media (max-width: 760px) {
+  .skeleton-ticket-poster {
+    width: 80px;
+    height: 120px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .shimmer::after {
+    animation: none;
+    transform: none;
+  }
+}
+
+.ticket-print-root {
+  width: min(1060px, calc(100% - 32px));
+  max-height: calc(100dvh - 40px);
+  margin: auto;
+  padding: 26px;
+  border: 1px solid #ffffff26;
+  border-radius: 16px;
+  background: #101722;
+  color: #f4f5fa;
+  overflow: auto;
+}
+.ticket-print-root::backdrop {
+  background: #050913dd;
+  backdrop-filter: blur(5px);
+}
+.ticket-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 20px;
+  margin-bottom: 22px;
+}
+.ticket-toolbar h2 {
+  font-size: 1.5rem;
+  margin-bottom: 8px;
+}
+.ticket-toolbar p {
+  color: #a6acba;
+  font-size: 0.85rem;
+  margin: 0;
+}
+.ticket-artwork {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 12px;
+}
+.ticket-preview-actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 22px;
+}
+@media (max-width: 760px) {
+  .ticket-print-root {
+    padding: 16px;
+  }
+  .ticket-preview-actions .button {
+    width: 100%;
+  }
+}
+@media print {
+  body:has(.ticket-print-root[open]) > :not(.ticket-print-root) {
+    display: none !important;
+  }
+  .ticket-print-root[open] {
+    display: block !important;
+    position: static;
+    width: 100%;
+    max-width: none;
+    max-height: none;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    overflow: visible;
+    background: white;
+    color: black;
+  }
+  .ticket-print-root::backdrop {
+    background: transparent;
+  }
+  .ticket-artwork {
+    width: 100%;
+    height: auto;
+    break-inside: avoid;
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+  @page {
+    size: A4 portrait;
+    margin: 12mm;
+  }
+}
+
+.admin-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  border-bottom: 1px solid #ffffff20;
+  padding-bottom: 22px;
+}
+.admin-tabs .chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.admin-controls {
+  display: flex;
+  align-items: end;
+  gap: 20px;
+  margin: 25px 0;
+}
+.admin-search {
+  flex: 1;
+}
+.admin-confirm {
+  border-color: #f84568;
+  margin-bottom: 24px;
+}
+.admin-dialog {
+  margin: auto;
+  width: min(820px, calc(100% - 32px));
+  max-height: calc(100dvh - 40px);
+  overflow: auto;
+  background: #101722;
+  color: #f4f5fa;
+  border: 1px solid #ffffff25;
+  border-radius: 16px;
+  padding: 30px;
+}
+.admin-dialog::backdrop {
+  background: #050913db;
+  backdrop-filter: blur(4px);
+}
+.admin-fields {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0 22px;
+}
+.admin-fields .wide {
+  grid-column: 1/-1;
+}
+.admin-fields textarea {
+  display: block;
+  margin-top: 7px;
+  width: 100%;
+  background: #0d1420;
+  color: #f4f5fa;
+  border: 1px solid #ffffff26;
+  padding: 12px;
+  border-radius: 7px;
+  font: inherit;
+  resize: vertical;
+}
+.admin-page table .actions {
+  flex-wrap: nowrap;
+}
+.admin-page td:first-child {
+  white-space: normal;
+  min-width: 150px;
+  max-width: 260px;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 760px) {
+  .admin-controls {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .admin-fields {
+    grid-template-columns: 1fr;
+  }
+  .admin-dialog {
+    padding: 20px;
+  }
+}
+
+.movie-theatres {
+  margin: 12px 0;
+  font-size: 0.85rem;
+}
+.movie-theatres ul {
+  padding-left: 18px;
+  margin: 6px 0;
+}
+.movie-theatres li {
+  margin: 4px 0;
+  overflow-wrap: anywhere;
+}
+.theatre-show-group {
+  border-top: 1px solid #ffffff18;
+  margin-top: 24px;
+  padding-top: 20px;
+}
+
+.seat-map {
+  width: max-content;
+  max-width: none;
+  min-width: 100%;
+}
+.seat-row .seat {
+  flex: 0 0 32px;
+}
+.seat-row > span.seat {
+  width: 32px;
+  color: inherit;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.screen-manager fieldset {
+  min-width: 0;
+  border: 0;
+  padding: 0;
+}
+.screen-manager label {
+  display: grid;
+  gap: 8px;
+  margin: 16px 0;
+}
+.screen-manager td input:not([type='checkbox']) {
+  width: 90px;
+}

@@ -1,3 +1,5 @@
+import { seatPrice } from '../src/utils/seatCategory.js';
+import { layoutSeats } from './theatre-management.mjs';
 import { createServer } from 'node:http';
 import { DatabaseSync } from 'node:sqlite';
 import {
@@ -8,7 +10,7 @@ import {
 } from 'node:crypto';
 import { mkdirSync, existsSync, readFileSync, statSync } from 'node:fs';
 import { dirname, resolve, extname } from 'node:path';
-import movies from '../src/data/data.js';
+import { catalogue } from './catalogue.mjs';
 
 export function createApp({
   dbPath = 'server/data/quickshow.sqlite',
@@ -26,54 +28,33 @@ export function createApp({
     CREATE TABLE IF NOT EXISTS shows(id TEXT PRIMARY KEY, movie_id INTEGER NOT NULL, date TEXT NOT NULL, time TEXT NOT NULL, starts_at TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1);
     CREATE TABLE IF NOT EXISTS bookings(id TEXT PRIMARY KEY, user_id INTEGER REFERENCES users(id), show_id TEXT REFERENCES shows(id), seats TEXT NOT NULL, total INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'reserved', created_at TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS seats(show_id TEXT REFERENCES shows(id), seat TEXT, booking_id TEXT REFERENCES bookings(id), PRIMARY KEY(show_id,seat));`);
+  const {
+    getMovie,
+    listMovies,
+    adminAction,
+    listTheatres,
+    withTheatre,
+    management,
+  } = catalogue(db, now);
   const attempts = new Map();
   const publicUser = (u) =>
     u ? { id: u.id, name: u.name, email: u.email, role: u.role } : null;
-  function seedShows() {
-    const today = new Intl.DateTimeFormat('en-CA', {
-      timeZone: 'Asia/Kolkata',
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-    }).format(now());
-    const start = new Date(`${today}T12:00:00+05:30`);
-    const insert = db.prepare(
-      'INSERT OR IGNORE INTO shows(id,movie_id,date,time,starts_at) VALUES(?,?,?,?,?)',
-    );
-    for (let day = 0; day < 7; day++) {
-      const date = new Date(start.getTime() + day * 86400000)
-        .toISOString()
-        .slice(0, 10);
-      for (const movie of movies)
-        for (const [index, time] of movie.showTimings.entries()) {
-          const [, h, m, period] = time.match(/(\d+):(\d+) (AM|PM)/);
-          const hour = (Number(h) % 12) + (period === 'PM' ? 12 : 0);
-          insert.run(
-            `${movie.id}-${date}-${index}`,
-            movie.id,
-            date,
-            time,
-            new Date(
-              `${date}T${String(hour).padStart(2, '0')}:${m}:00+05:30`,
-            ).toISOString(),
-          );
-        }
-    }
-  }
   const fail = (status, message) => {
     throw Object.assign(new Error(message), { status });
   };
-  const getShow = (id) => db.prepare('SELECT * FROM shows WHERE id=?').get(id);
+  const getShow = (id) =>
+    withTheatre(db.prepare('SELECT * FROM shows WHERE id=?').get(id));
   const getBookings = (userId) =>
     db
       .prepare(
-        `SELECT b.*, s.movie_id, s.date, s.time, s.starts_at, u.name, u.email FROM bookings b JOIN shows s ON s.id=b.show_id JOIN users u ON u.id=b.user_id ${userId ? 'WHERE b.user_id=?' : ''} ORDER BY b.created_at DESC`,
+        `SELECT b.*, s.movie_id, s.date, s.time, s.starts_at, s.screen, s.theatre_id, u.name, u.email FROM bookings b JOIN shows s ON s.id=b.show_id JOIN users u ON u.id=b.user_id ${userId ? 'WHERE b.user_id=?' : ''} ORDER BY b.created_at DESC`,
       )
       .all(...(userId ? [userId] : []))
       .map((b) => ({
         ...b,
         seats: JSON.parse(b.seats),
-        movie: movies.find((m) => m.id === b.movie_id),
+        movie: getMovie(b.movie_id),
+        ...(b.snapshot ? JSON.parse(b.snapshot) : {}),
       }));
   async function body(req) {
     let data = '';
@@ -96,7 +77,7 @@ export function createApp({
     res.setHeader('X-Frame-Options', 'DENY');
     res.setHeader(
       'Content-Security-Policy',
-      "default-src 'self'; img-src 'self' https://image.tmdb.org data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'",
+      "default-src 'self'; img-src 'self' https: data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'",
     );
     const json = (status, value) => {
       res.writeHead(status, {
@@ -147,7 +128,6 @@ export function createApp({
         if (req.headers['content-type']?.split(';')[0] !== 'application/json')
           fail(415, 'Use application/json.');
       }
-      seedShows();
       const rawToken =
         req.headers.cookie
           ?.split(';')
@@ -165,7 +145,8 @@ export function createApp({
       };
       const requireAdmin = () => {
         requireUser();
-        if (user.role !== 'admin') fail(403, 'Administrator access required.');
+        if (!['admin', 'theatre_admin'].includes(user.role))
+          fail(403, 'Administrator access required.');
       };
       if (path === '/api/health' && req.method === 'GET')
         return json(200, { status: 'ok' });
@@ -250,24 +231,42 @@ export function createApp({
         );
         return json(200, { ok: true });
       }
+      if (path === '/api/theatres' && req.method === 'GET')
+        return json(200, listTheatres());
       if (path === '/api/movies' && req.method === 'GET')
-        return json(200, movies);
+        return json(
+          200,
+          listMovies().map((movie) => ({
+            ...movie,
+            theatres: db
+              .prepare(
+                `SELECT DISTINCT t.* FROM theatres t JOIN shows s ON s.theatre_id=t.id WHERE s.movie_id=? AND s.active=1 AND s.starts_at>? ORDER BY t.name,t.id`,
+              )
+              .all(movie.id, now().toISOString()),
+          })),
+        );
       if (path === '/api/shows' && req.method === 'GET')
         return json(
           200,
           db
             .prepare(
-              'SELECT * FROM shows WHERE movie_id=? AND active=1 AND starts_at>? ORDER BY starts_at',
+              'SELECT s.* FROM shows s JOIN movies m ON m.id=s.movie_id WHERE s.movie_id=? AND s.active=1 AND m.archived=0 AND s.starts_at>? ORDER BY s.starts_at',
             )
-            .all(Number(url.searchParams.get('movie')), now().toISOString()),
+            .all(Number(url.searchParams.get('movie')), now().toISOString())
+            .map(withTheatre),
         );
       if (path.startsWith('/api/shows/') && req.method === 'GET') {
         const show = getShow(path.split('/')[3]);
-        if (!show || !show.active || show.starts_at <= now().toISOString())
+        if (
+          !show ||
+          !show.active ||
+          getMovie(show.movie_id)?.archived ||
+          show.starts_at <= now().toISOString()
+        )
           fail(404, 'This screening is no longer available.');
         return json(200, {
           ...show,
-          movie: movies.find((m) => m.id === show.movie_id),
+          movie: getMovie(show.movie_id),
           occupied: db
             .prepare('SELECT seat FROM seats WHERE show_id=?')
             .all(show.id)
@@ -287,7 +286,9 @@ export function createApp({
         if (req.method === 'POST') {
           const { movieId, saved } = await body(req);
           if (
-            !movies.some((m) => m.id === movieId) ||
+            !Number.isInteger(movieId) ||
+            !getMovie(movieId) ||
+            getMovie(movieId).archived ||
             typeof saved !== 'boolean'
           )
             fail(400, 'Invalid favourite.');
@@ -307,7 +308,8 @@ export function createApp({
         requireUser();
         if (req.method === 'GET') return json(200, getBookings(user.id));
         if (req.method === 'POST') {
-          const { showId, seats } = await body(req);
+          const { showId, seats, expectedTotal, expectedLayoutVersion } =
+            await body(req);
           if (
             typeof showId !== 'string' ||
             !Array.isArray(seats) ||
@@ -316,18 +318,47 @@ export function createApp({
             new Set(seats).size !== seats.length ||
             seats.some(
               (s) =>
-                typeof s !== 'string' || !/^[A-H](?:[1-9]|10|11|12)$/.test(s),
+                typeof s !== 'string' ||
+                !/^[A-Z](?:[1-9]|[12][0-9]|30)$/.test(s),
             )
           )
             fail(400, 'Select between 1 and 8 valid, unique seats.');
           const show = getShow(showId);
-          if (!show || !show.active || show.starts_at <= now().toISOString())
+          if (
+            !show ||
+            !show.active ||
+            getMovie(show.movie_id)?.archived ||
+            show.starts_at <= now().toISOString()
+          )
             fail(400, 'This screening is no longer available.');
-          const movie = movies.find((m) => m.id === show.movie_id);
+          const movie = getMovie(show.movie_id);
+          if (!movie || movie.archived)
+            fail(400, 'This movie is no longer available.');
+          if (
+            expectedLayoutVersion !== undefined &&
+            expectedLayoutVersion !== show.layout_version
+          )
+            fail(
+              409,
+              'The seating layout changed. Review your seats and reserve again.',
+            );
+          const availableSeats = layoutSeats(show.layout);
+          if (seats.some((id) => !availableSeats.some((s) => s.id === id)))
+            fail(400, 'Select valid, available seats from this screen layout.');
           const total = seats.reduce(
-            (sum, seat) => sum + movie.price + (seat[0] >= 'F' ? 60 : 0),
+            (sum, seat) =>
+              sum +
+              seatPrice(
+                show.layout.rows.find((r) => r.label === seat[0]),
+                movie,
+              ),
             0,
           );
+          if (expectedTotal !== undefined && expectedTotal !== total)
+            fail(
+              409,
+              'The ticket price has changed. Review the updated total and reserve again.',
+            );
           const id = `QS-${randomBytes(6).toString('hex').toUpperCase()}`;
           db.exec('BEGIN IMMEDIATE');
           try {
@@ -341,7 +372,7 @@ export function createApp({
                 'One or more seats were just reserved. Please choose again.',
               );
             db.prepare(
-              'INSERT INTO bookings(id,user_id,show_id,seats,total,created_at) VALUES(?,?,?,?,?,?)',
+              'INSERT INTO bookings(id,user_id,show_id,seats,total,created_at,snapshot) VALUES(?,?,?,?,?,?,?)',
             ).run(
               id,
               user.id,
@@ -349,6 +380,16 @@ export function createApp({
               JSON.stringify([...seats].sort()),
               total,
               now().toISOString(),
+              JSON.stringify({
+                movie,
+                date: show.date,
+                time: show.time,
+                starts_at: show.starts_at,
+                screen: show.screen,
+                theatre: show.theatre,
+                layout: show.layout,
+                layout_version: show.layout_version,
+              }),
             );
             const insert = db.prepare('INSERT INTO seats VALUES(?,?,?)');
             for (const seat of seats) insert.run(showId, seat, id);
@@ -389,36 +430,85 @@ export function createApp({
         }
         return json(200, { ok: true });
       }
-      if (path === '/api/admin' && req.method === 'GET') {
+      if (path.startsWith('/api/admin')) {
         requireAdmin();
-        return json(200, {
-          bookings: getBookings(),
-          shows: db
+        if (path === '/api/admin' && req.method === 'GET') {
+          const theatres = listTheatres().filter((t) =>
+            management.canManage(user, t.id),
+          );
+          const shows = db
             .prepare(
-              'SELECT s.*, (SELECT count(*) FROM seats WHERE show_id=s.id) AS occupied FROM shows s WHERE starts_at>? ORDER BY starts_at',
+              'SELECT s.*, (SELECT count(*) FROM seats WHERE show_id=s.id) AS occupied, (SELECT count(*) FROM bookings WHERE show_id=s.id) AS booking_count FROM shows s ORDER BY starts_at DESC',
             )
-            .all(now().toISOString()),
-          users: db.prepare('SELECT count(*) AS count FROM users').get().count,
-        });
-      }
-      if (/^\/api\/admin\/shows\/[^/]+$/.test(path) && req.method === 'PATCH') {
-        requireAdmin();
-        const { active } = await body(req);
-        const id = path.split('/')[4];
-        if (typeof active !== 'boolean' || !getShow(id))
-          fail(400, 'Invalid screening.');
-        if (
-          !active &&
-          db
-            .prepare('SELECT count(*) AS count FROM seats WHERE show_id=?')
-            .get(id).count
-        )
-          fail(409, 'A screening with reservations cannot be disabled.');
-        db.prepare('UPDATE shows SET active=? WHERE id=?').run(
-          Number(active),
-          id,
-        );
-        return json(200, { ok: true });
+            .all()
+            .filter((s) => management.canManage(user, s.theatre_id))
+            .map(withTheatre)
+            .map((s) => ({ ...s, capacity: layoutSeats(s.layout).length }));
+          const bookings = getBookings().filter((b) =>
+            management.canManage(user, b.theatre_id),
+          );
+          const stats = theatres.map((t) => {
+            const screenings = shows.filter((s) => s.theatre_id === t.id);
+            const reservations = bookings.filter((b) => b.theatre_id === t.id);
+            const active = reservations.filter((b) => b.status === 'reserved');
+            const capacity = screenings.reduce((n, s) => n + s.capacity, 0);
+            const occupied = active.reduce((n, b) => n + b.seats.length, 0);
+            return {
+              theatre_id: t.id,
+              name: t.name,
+              screenings: screenings.length,
+              upcoming: screenings.filter(
+                (s) => s.active && s.starts_at > now().toISOString(),
+              ).length,
+              reservations: active.length,
+              cancellations: reservations.filter(
+                (b) => b.status === 'cancelled',
+              ).length,
+              seats: occupied,
+              capacity,
+              occupancy: capacity
+                ? Math.round((occupied / capacity) * 1000) / 10
+                : 0,
+              value: active.reduce((n, b) => n + b.total, 0),
+            };
+          });
+          return json(200, {
+            movies: listMovies(user.role === 'admin'),
+            theatres,
+            shows,
+            bookings,
+            stats,
+            screens: management
+              .screens()
+              .filter((s) => management.canManage(user, s.theatre_id)),
+            users:
+              user.role === 'admin'
+                ? db.prepare('SELECT count(*) AS n FROM users').get().n
+                : new Set(bookings.map((b) => b.user_id)).size,
+            customers:
+              user.role === 'admin'
+                ? db
+                    .prepare(
+                      'SELECT u.id,u.name,u.email,u.role,(SELECT count(*) FROM bookings WHERE user_id=u.id) AS booking_count FROM users u ORDER BY u.id DESC',
+                    )
+                    .all()
+                    .map((u) => ({ ...u, theatre_ids: management.assigned(u) }))
+                : [],
+            audit:
+              user.role === 'admin'
+                ? db
+                    .prepare(
+                      'SELECT a.*,u.name AS actor FROM audit_log a LEFT JOIN users u ON u.id=a.actor_id ORDER BY a.id DESC LIMIT 100',
+                    )
+                    .all()
+                : [],
+          });
+        }
+        if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method))
+          return json(
+            req.method === 'POST' ? 201 : 200,
+            adminAction(path, req.method, await body(req), user),
+          );
       }
       fail(404, 'Endpoint not found.');
     } catch (error) {

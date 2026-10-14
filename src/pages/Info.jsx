@@ -7,8 +7,8 @@ const content = {
   ],
   theater: [
     'Welcome to Quick Show Cinema.',
-    'Five dedicated screens. Classic and premium seating. A place for every movie fan.',
-    'Each screen has 96 seats across eight rows. Rows A–E offer classic seats; rows F–H are premium seats at an additional ₹60 per seat. All screenings are 2D, in English, and displayed in India Standard Time (IST). This is a fictional venue for development; there is no physical address or real admission.',
+    'Flexible screening schedules. Classic and premium seating. A place for every movie fan.',
+    'Each screen has 96 seats across eight rows. Rows A–E offer classic seats; rows F–H are premium seats with a surcharge shown on the movie and seat-selection pages. Screenings are 2D; language is listed per movie and times are displayed in India Standard Time (IST). This is a fictional venue for development; there is no physical address or real admission.',
   ],
   contact: [
     'A little help for movie night.',
@@ -23,7 +23,7 @@ const content = {
   terms: [
     'Before you reserve.',
     'This application is a development preview with no payment processing.',
-    'Reservations are unpaid, do not constitute purchased tickets, and are not valid for cinema admission. You may reserve up to eight seats per booking and cancel before the screening begins. Prices are in INR; premium rows cost ₹60 extra per seat, with no additional booking fee. Seat availability is confirmed on the server at reservation time. Sample screenings are generated seven days ahead, in IST.',
+    'Reservations are unpaid, do not constitute purchased tickets, and are not valid for cinema admission. You may reserve up to eight seats per booking and cancel before the screening begins. Prices are in INR; premium surcharges are listed per movie, with no additional booking fee. Seat availability is confirmed on the server at reservation time. Screenings are managed by the cinema administrator and displayed in IST.',
   ],
 };
 export default function Info({ type }) {

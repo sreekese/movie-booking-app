@@ -1,20 +1,18 @@
 import { useState } from 'react';
-import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom';
+import { Link, Navigate, useNavigate } from 'react-router-dom';
 import { api } from '../api';
 import { useApp } from '../context';
 export default function Auth() {
   const { user, setUser } = useApp();
-  const location = useLocation();
   const navigate = useNavigate();
   const [register, setRegister] = useState(false);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
-  const destination =
-    location.state?.from?.startsWith('/') &&
-    !location.state.from.startsWith('//')
-      ? location.state.from
+  const destination = (account) =>
+    ['admin', 'theatre_admin'].includes(account.role)
+      ? '/admin'
       : '/my-bookings';
-  if (user) return <Navigate to={destination} replace />;
+  if (user) return <Navigate to={destination(user)} replace />;
   const submit = async (e) => {
     e.preventDefault();
     setBusy(true);
@@ -26,7 +24,7 @@ export default function Auth() {
         body: data,
       });
       setUser(result.user);
-      navigate(destination, { replace: true });
+      navigate(destination(result.user), { replace: true });
     } catch (e) {
       setError(e.message);
     } finally {

@@ -1,11 +1,44 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { api } from './api';
 import { AppContext } from './context';
 export default function Provider({ children }) {
+  const [movies, setMovies] = useState([]);
+  const [catalogueLoading, setCatalogueLoading] = useState(true);
+  const [catalogueError, setCatalogueError] = useState('');
+  const reloadCatalogue = useCallback(async () => {
+    setCatalogueLoading(true);
+    try {
+      setMovies(await api('/movies'));
+      setCatalogueError('');
+    } catch (error) {
+      setCatalogueError(error.message);
+    } finally {
+      setCatalogueLoading(false);
+    }
+  }, []);
+  useEffect(() => {
+    let current = true;
+    api('/movies')
+      .then((data) => {
+        if (current) setMovies(data);
+      })
+      .catch((error) => {
+        if (current) setCatalogueError(error.message);
+      })
+      .finally(() => {
+        if (current) setCatalogueLoading(false);
+      });
+    return () => {
+      current = false;
+    };
+  }, []);
   const [user, setUser] = useState(null);
   const [ready, setReady] = useState(false);
   const [error, setError] = useState('');
-  const [favourites, setFavourites] = useState([]);
+  const [savedMovies, setSavedMovies] = useState({ userId: null, items: [] });
+  const favouritesLoading = !!user && savedMovies.userId !== user.id;
+  const favourites =
+    user && savedMovies.userId === user.id ? savedMovies.items : [];
   useEffect(() => {
     api('/me')
       .then(({ user }) => setUser(user))
@@ -17,9 +50,14 @@ export default function Provider({ children }) {
     if (user)
       api('/favourites')
         .then((data) => {
-          if (current) setFavourites(data);
+          if (current) setSavedMovies({ userId: user.id, items: data });
         })
-        .catch((e) => setError(e.message));
+        .catch((e) => {
+          if (current) {
+            setError(e.message);
+            setSavedMovies({ userId: user.id, items: [] });
+          }
+        });
     return () => {
       current = false;
     };
@@ -27,18 +65,33 @@ export default function Provider({ children }) {
   const logout = async () => {
     await api('/logout', { method: 'POST' });
     setUser(null);
-    setFavourites([]);
+    setSavedMovies({ userId: null, items: [] });
   };
   const toggleFavourite = async (id) => {
     const saved = !favourites.includes(id);
     await api('/favourites', { method: 'POST', body: { movieId: id, saved } });
-    setFavourites((list) =>
-      saved ? [...new Set([...list, id])] : list.filter((x) => x !== id),
-    );
+    setSavedMovies((state) => ({
+      userId: user.id,
+      items: saved
+        ? [...new Set([...state.items, id])]
+        : state.items.filter((x) => x !== id),
+    }));
   };
   return (
     <AppContext.Provider
-      value={{ user, setUser, ready, favourites, toggleFavourite, logout }}
+      value={{
+        movies,
+        catalogueLoading,
+        catalogueError,
+        reloadCatalogue,
+        user,
+        setUser,
+        ready,
+        favourites,
+        favouritesLoading,
+        toggleFavourite,
+        logout,
+      }}
     >
       {error && (
         <div className="service-error" role="alert">

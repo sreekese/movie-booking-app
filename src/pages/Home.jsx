@@ -1,9 +1,19 @@
+import { useApp } from '../context';
 import { Link } from 'react-router-dom';
 import { ArrowRight, Ticket, Armchair, CalendarDays } from 'lucide-react';
-import movies from '../data/data';
+import CatalogueState from '../components/CatalogueState';
 import MovieCard from '../components/MovieCard';
 export default function Home() {
+  const { movies, catalogueLoading, catalogueError } = useApp();
   const movie = movies[0];
+  if (catalogueLoading || catalogueError) return <CatalogueState />;
+  if (!movie)
+    return (
+      <section className="container page empty">
+        <h1>New stories are on their way.</h1>
+        <p>No movies are currently published. Check back soon.</p>
+      </section>
+    );
   return (
     <>
       <section
@@ -38,7 +48,10 @@ export default function Home() {
           </div>
         </div>
         <div className="hero-caption">
-          <span className="accent">01 / 05</span> &nbsp; SPOTLIGHT COLLECTION
+          <span className="accent">
+            01 / {String(movies.length).padStart(2, '0')}
+          </span>{' '}
+          &nbsp; SPOTLIGHT COLLECTION
         </div>
       </section>
       <section className="container section">
@@ -69,7 +82,7 @@ export default function Home() {
         <div className="experience-item">
           <CalendarDays />
           <h3>Find your moment</h3>
-          <p>Seven days of screenings, with times that fit your plans.</p>
+          <p>Choose from the screenings in our current programme.</p>
         </div>
         <div className="experience-item">
           <Armchair />
