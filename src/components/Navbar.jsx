@@ -1,3 +1,4 @@
+import LoadingSkeleton from './LoadingSkeleton';
 import { useState } from 'react';
 import { Link, NavLink, useNavigate } from 'react-router-dom';
 import { Menu, X, Clapperboard } from 'lucide-react';
@@ -5,11 +6,15 @@ import toast from 'react-hot-toast';
 import { useApp } from '../context';
 export default function Navbar() {
   const [open, setOpen] = useState(false);
-  const { user, logout } = useApp();
+  const { user, logout, ready } = useApp();
   const navigate = useNavigate();
   return (
     <header className="site-header">
-      <Link to="/" className="brand" onClick={() => setOpen(false)}>
+      <Link
+        to={['admin', 'theatre_admin'].includes(user?.role) ? '/admin' : '/'}
+        className="brand"
+        onClick={() => setOpen(false)}
+      >
         <Clapperboard />
         <span>
           quick<span>show</span>
@@ -30,23 +35,23 @@ export default function Navbar() {
         className={open ? 'open' : ''}
         aria-label="Main navigation"
       >
-        {[
-          ['/', 'Home'],
-          ['/movies', 'Movies'],
-          ['/theater', 'Cinema'],
-          ['/favourite', 'Favourites'],
-          ['/my-bookings', 'My bookings'],
-        ].map(([to, label]) => (
+        {(['admin', 'theatre_admin'].includes(user?.role)
+          ? [['/admin', 'Admin dashboard']]
+          : [
+              ['/', 'Home'],
+              ['/movies', 'Movies'],
+              ['/theater', 'Cinema'],
+              ['/favourite', 'Favourites'],
+              ['/my-bookings', 'My bookings'],
+            ]
+        ).map(([to, label]) => (
           <NavLink key={to} to={to} end onClick={() => setOpen(false)}>
             {label}
           </NavLink>
         ))}
-        {user?.role === 'admin' && (
-          <NavLink to="/admin" onClick={() => setOpen(false)}>
-            Admin
-          </NavLink>
-        )}
-        {user ? (
+        {!ready ? (
+          <LoadingSkeleton variant="account" label="Loading account…" />
+        ) : user ? (
           <button
             className="button small secondary"
             onClick={async () => {

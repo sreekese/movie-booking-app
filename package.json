@@ -16,7 +16,8 @@
     "format:check": "prettier --check .",
     "test:browser": "npm run build && node scripts/browser-smoke.mjs",
     "dev:client": "vite",
-    "test:browser:dev": "node scripts/browser-smoke.mjs --dev"
+    "test:browser:dev": "node scripts/browser-smoke.mjs --dev",
+    "db:migrate": "node --env-file-if-exists=.env scripts/migrate.mjs"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.3.3",

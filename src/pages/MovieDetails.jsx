@@ -1,23 +1,23 @@
+import PosterImage from '../components/PosterImage';
+import LoadingSkeleton from '../components/LoadingSkeleton';
 import { useEffect, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { Star, Heart, ExternalLink } from 'lucide-react';
 import toast from 'react-hot-toast';
-import movies from '../data/data';
+import CatalogueState from '../components/CatalogueState';
 import { api, dateLabel, money } from '../api';
 import { useApp } from '../context';
-const trailers = [
-  'TcMBFSGVi1c',
-  'JfVOs4VSpmA',
-  'EXeTwQWrcwY',
-  'zSWdZVtXT7E',
-  'zAGVQLHvwOY',
-];
 export default function MovieDetails() {
   const { id } = useParams();
+  const { movies, catalogueLoading, catalogueError } = useApp();
   const movie = movies.find((m) => m.id === Number(id));
-  const { user, favourites, toggleFavourite } = useApp();
+  const { user, ready, favourites, favouritesLoading, toggleFavourite } =
+    useApp();
   const [shows, setShows] = useState([]);
   const [date, setDate] = useState('');
+  const [params, setParams] = useSearchParams();
+  const theatre = params.get('theatre') || '';
+  const setTheatre = (value) => setParams(value ? { theatre: value } : {});
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
   useEffect(() => {
@@ -39,6 +39,7 @@ export default function MovieDetails() {
       current = false;
     };
   }, [id]);
+  if (catalogueLoading || catalogueError) return <CatalogueState />;
   if (!movie)
     return (
       <section className="container page empty">
@@ -49,13 +50,30 @@ export default function MovieDetails() {
       </section>
     );
   const saved = favourites.includes(movie.id);
+  const selectedShows = shows.filter(
+    (s) => !theatre || s.theatre_id === Number(theatre),
+  );
+  const selectedDate = selectedShows.some((s) => s.date === date)
+    ? date
+    : selectedShows[0]?.date;
+  const venues = [
+    ...new Map(
+      selectedShows
+        .filter((s) => s.date === selectedDate)
+        .map((s) => [s.theatre_id, s.theatre]),
+    ).values(),
+  ];
   return (
     <section className="container page">
       <Link className="back-link" to="/movies">
         ← All movies
       </Link>
       <div className="movie-detail">
-        <img className="detail-poster" src={movie.poster} alt={movie.title} />
+        <PosterImage
+          className="detail-poster"
+          src={movie.poster}
+          alt={movie.title}
+        />
         <div>
           <p className="eyebrow accent">THE CLASSICS COLLECTION</p>
           <h1>{movie.title}</h1>
@@ -70,17 +88,20 @@ export default function MovieDetails() {
           </p>
           <p className="synopsis">{movie.description}</p>
           <div className="actions">
-            <a
-              className="button secondary"
-              href={`https://www.youtube.com/watch?v=${trailers[movie.id - 1]}`}
-              target="_blank"
-              rel="noreferrer"
-            >
-              Watch trailer <ExternalLink size={16} />
-            </a>
+            {movie.trailer && (
+              <a
+                className="button secondary"
+                href={movie.trailer}
+                target="_blank"
+                rel="noreferrer"
+              >
+                Watch trailer <ExternalLink size={16} />
+              </a>
+            )}
             <button
               className="button secondary"
               aria-pressed={saved}
+              disabled={!ready || favouritesLoading}
               onClick={async () => {
                 if (!user) return toast.error('Sign in to save favourites.');
                 try {
@@ -95,7 +116,8 @@ export default function MovieDetails() {
             </button>
           </div>
           <p className="muted">
-            Classic seats from {money(movie.price)} · Premium +{money(60)}
+            Classic seats from {money(movie.price)} · Premium +
+            {money(movie.premiumPrice)}
           </p>
         </div>
       </div>
@@ -103,42 +125,93 @@ export default function MovieDetails() {
         <p className="eyebrow accent">PLAN YOUR VISIT</p>
         <h2>Pick your show</h2>
         <p className="muted">
-          Quick Show Cinema · Screen {movie.id} · 2D · All times IST
+          Choose a theatre and screening · 2D · All times IST
         </p>
-        {loading && <p role="status">Loading screenings…</p>}
+        {loading && (
+          <LoadingSkeleton variant="shows" label="Loading screenings…" />
+        )}
         {error && (
           <p role="alert" className="error">
             {error}{' '}
             <button onClick={() => window.location.reload()}>Retry</button>
           </p>
         )}
+        {!!selectedShows.length && (
+          <label>
+            Theatre
+            <select
+              value={theatre}
+              onChange={(e) => {
+                setTheatre(e.target.value);
+                setDate(
+                  shows.find(
+                    (s) =>
+                      !e.target.value ||
+                      s.theatre_id === Number(e.target.value),
+                  )?.date || '',
+                );
+              }}
+            >
+              <option value="">All theatres</option>
+              {theatre &&
+                !shows.some((s) => s.theatre_id === Number(theatre)) && (
+                  <option value={theatre}>
+                    Selected theatre · no upcoming screenings
+                  </option>
+                )}
+              {[
+                ...new Map(
+                  shows.map((s) => [s.theatre_id, s.theatre]),
+                ).values(),
+              ].map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name} · {t.city}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         <div className="chips dates">
-          {[...new Set(shows.map((s) => s.date))].map((d) => (
+          {[
+            ...new Set(
+              shows
+                .filter((s) => !theatre || s.theatre_id === Number(theatre))
+                .map((s) => s.date),
+            ),
+          ].map((d) => (
             <button
-              className={`chip ${date === d ? 'selected' : ''}`}
+              className={`chip ${selectedDate === d ? 'selected' : ''}`}
               key={d}
               onClick={() => setDate(d)}
-              aria-pressed={date === d}
+              aria-pressed={selectedDate === d}
             >
               {dateLabel(d)}
             </button>
           ))}
         </div>
-        <div className="chips">
-          {shows
-            .filter((s) => s.date === date)
-            .map((s) => (
-              <Link
-                key={s.id}
-                className="show-time"
-                to={`/movies/${movie.id}/${s.id}`}
-              >
-                {s.time}
-                <small>2D · Choose seats</small>
-              </Link>
-            ))}
-        </div>
-        {!loading && !error && !shows.length && (
+        {venues.map((t) => (
+          <section className="theatre-show-group" key={t.id}>
+            <h3>{t.name}</h3>
+            <p className="muted">
+              {t.city} · {t.address}
+            </p>
+            <div className="chips">
+              {selectedShows
+                .filter((s) => s.theatre_id === t.id && s.date === selectedDate)
+                .map((s) => (
+                  <Link
+                    key={s.id}
+                    className="show-time"
+                    to={`/movies/${movie.id}/${s.id}`}
+                  >
+                    {s.time}
+                    <small>Screen {s.screen} · 2D</small>
+                  </Link>
+                ))}
+            </div>
+          </section>
+        ))}
+        {!loading && !error && !selectedShows.length && (
           <p>No upcoming screenings are available.</p>
         )}
       </div>

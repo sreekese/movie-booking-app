@@ -1,21 +1,15 @@
+import TicketPreview from '../components/TicketPreview';
+import { downloadTicket } from '../utils/ticket';
+import LoadingSkeleton from '../components/LoadingSkeleton';
 import { useEffect, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Download, Printer } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { api, dateLabel, money } from '../api';
-function download(booking) {
-  const text = `QUICK SHOW — UNPAID DEMO RESERVATION\nNot valid for admission\n\nReference: ${booking.id}\nMovie: ${booking.movie.title}\nCinema: Quick Show Cinema, Screen ${booking.movie_id}\nDate: ${dateLabel(booking.date)}\nTime: ${booking.time} IST\nSeats: ${booking.seats.join(', ')}\nTotal: ${money(booking.total)}\nStatus: ${booking.status}\nPayment: Not collected\n`;
-  const url = URL.createObjectURL(
-    new Blob([text], { type: 'text/plain;charset=utf-8' }),
-  );
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `${booking.id}.txt`;
-  a.click();
-  URL.revokeObjectURL(url);
-}
 export default function MyBookings() {
   const [bookings, setBookings] = useState(null);
+  const [previewId, setPreviewId] = useState(null);
+  const [downloading, setDownloading] = useState(null);
   const [error, setError] = useState('');
   const [confirm, setConfirm] = useState('');
   const [busy, setBusy] = useState(false);
@@ -43,6 +37,13 @@ export default function MyBookings() {
   };
   return (
     <section className="container page">
+      {bookings?.find((b) => b.id === previewId) && (
+        <TicketPreview
+          key={previewId}
+          booking={bookings.find((b) => b.id === previewId)}
+          onClose={() => setPreviewId(null)}
+        />
+      )}
       <p className="eyebrow accent">ALL YOUR PLANS, IN ONE PLACE</p>
       <h1>My reservations</h1>
       {params.get('reservation') &&
@@ -70,7 +71,9 @@ export default function MyBookings() {
           <button onClick={() => window.location.reload()}>Retry</button>
         </p>
       )}
-      {!bookings && !error && <p role="status">Loading reservations…</p>}
+      {!bookings && !error && (
+        <LoadingSkeleton variant="bookings" label="Loading reservations…" />
+      )}
       {bookings
         ?.filter(
           (b) =>
@@ -94,7 +97,11 @@ export default function MyBookings() {
                 {dateLabel(b.date)} · {b.time} IST
               </p>
               <p className="muted">
-                Quick Show Cinema · Screen {b.movie_id}
+                {b.theatre?.name || 'Quick Show Cinema'} · Screen {b.screen}
+                <br />
+                <small>
+                  {b.theatre?.city} · {b.theatre?.address}
+                </small>
                 <br />
                 Seats {b.seats.join(', ')}
               </p>
@@ -108,15 +115,26 @@ export default function MyBookings() {
               <span className="muted small-text">No payment collected</span>
               <button
                 className="button secondary small"
-                onClick={() => download(b)}
+                disabled={downloading === b.id}
+                onClick={async () => {
+                  setDownloading(b.id);
+                  try {
+                    await downloadTicket(b);
+                  } catch (error) {
+                    toast.error(error.message);
+                  } finally {
+                    setDownloading(null);
+                  }
+                }}
               >
-                <Download size={16} /> Download summary
+                <Download size={16} />{' '}
+                {downloading === b.id ? 'Preparing…' : 'Download ticket (PNG)'}
               </button>
               <button
                 className="text-link no-print"
-                onClick={() => window.print()}
+                onClick={() => setPreviewId(b.id)}
               >
-                <Printer size={16} /> Print reservations
+                <Printer size={16} /> Print ticket / PDF
               </button>
               {b.status !== 'cancelled' &&
                 new Date(b.starts_at) > new Date() && (
