@@ -1,33 +1,51 @@
+import { uploadImage } from './uploads.mjs';
+import { mapAsync, filterAsync } from './async.mjs';
 import { seatPrice } from '../src/utils/seatCategory.js';
 import { layoutSeats } from './theatre-management.mjs';
 import { createServer } from 'node:http';
-import { DatabaseSync } from 'node:sqlite';
+import { openDatabase } from './database.mjs';
 import {
   randomBytes,
   scryptSync,
   timingSafeEqual,
   createHash,
 } from 'node:crypto';
-import { mkdirSync, existsSync, readFileSync, statSync } from 'node:fs';
-import { dirname, resolve, extname } from 'node:path';
+import { existsSync, readFileSync, statSync } from 'node:fs';
+import { resolve, extname } from 'node:path';
 import { catalogue } from './catalogue.mjs';
-
-export function createApp({
+export async function createApp({
   dbPath = 'server/data/quickshow.sqlite',
+  databaseUrl = process.env.DATABASE_URL,
   production = false,
   adminEmail = '',
   origin = '',
   now = () => new Date(),
+  storeImage = uploadImage,
 } = {}) {
-  mkdirSync(dirname(dbPath), { recursive: true });
-  const db = new DatabaseSync(dbPath);
-  db.exec(`PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL;
+  const db = await openDatabase({ dbPath, databaseUrl });
+  let services;
+  await db
+    .scope(async () => {
+      await db.exec(`PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL;
     CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY, name TEXT NOT NULL, email TEXT NOT NULL UNIQUE, password TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'customer');
     CREATE TABLE IF NOT EXISTS sessions(token TEXT PRIMARY KEY, user_id INTEGER REFERENCES users(id), expires INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS favourites(user_id INTEGER REFERENCES users(id), movie_id INTEGER, PRIMARY KEY(user_id,movie_id));
     CREATE TABLE IF NOT EXISTS shows(id TEXT PRIMARY KEY, movie_id INTEGER NOT NULL, date TEXT NOT NULL, time TEXT NOT NULL, starts_at TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1);
     CREATE TABLE IF NOT EXISTS bookings(id TEXT PRIMARY KEY, user_id INTEGER REFERENCES users(id), show_id TEXT REFERENCES shows(id), seats TEXT NOT NULL, total INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'reserved', created_at TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS seats(show_id TEXT REFERENCES shows(id), seat TEXT, booking_id TEXT REFERENCES bookings(id), PRIMARY KEY(show_id,seat));`);
+      services = await catalogue(db, now);
+      await db.exec(
+        'CREATE TABLE IF NOT EXISTS rate_limits(key TEXT PRIMARY KEY,count INTEGER NOT NULL,expires BIGINT NOT NULL);',
+      );
+      if (adminEmail)
+        await db
+          .prepare("UPDATE users SET role='admin' WHERE email=?")
+          .run(adminEmail.trim().toLowerCase());
+    }, true)
+    .catch(async (error) => {
+      await db.close();
+      throw error;
+    });
   const {
     getMovie,
     listMovies,
@@ -35,32 +53,60 @@ export function createApp({
     listTheatres,
     withTheatre,
     management,
-  } = catalogue(db, now);
-  const attempts = new Map();
+  } = services;
+
   const publicUser = (u) =>
-    u ? { id: u.id, name: u.name, email: u.email, role: u.role } : null;
+    u
+      ? {
+          id: u.id,
+          name: u.name,
+          email: u.email,
+          role: u.role,
+        }
+      : null;
   const fail = (status, message) => {
-    throw Object.assign(new Error(message), { status });
+    throw Object.assign(new Error(message), {
+      status,
+    });
   };
-  const getShow = (id) =>
-    withTheatre(db.prepare('SELECT * FROM shows WHERE id=?').get(id));
-  const getBookings = (userId) =>
-    db
-      .prepare(
-        `SELECT b.*, s.movie_id, s.date, s.time, s.starts_at, s.screen, s.theatre_id, u.name, u.email FROM bookings b JOIN shows s ON s.id=b.show_id JOIN users u ON u.id=b.user_id ${userId ? 'WHERE b.user_id=?' : ''} ORDER BY b.created_at DESC`,
-      )
-      .all(...(userId ? [userId] : []))
-      .map((b) => ({
+  const getShow = async (id) =>
+    await withTheatre(
+      await db.prepare('SELECT * FROM shows WHERE id=?').get(id),
+    );
+  const getBookings = async (userId) =>
+    await mapAsync(
+      await db
+        .prepare(
+          `SELECT b.*, s.movie_id, s.date, s.time, s.starts_at, s.screen, s.theatre_id, u.name, u.email FROM bookings b JOIN shows s ON s.id=b.show_id JOIN users u ON u.id=b.user_id ${userId ? 'WHERE b.user_id=?' : ''} ORDER BY b.created_at DESC`,
+        )
+        .all(...(userId ? [userId] : [])),
+      async (b) => ({
         ...b,
         seats: JSON.parse(b.seats),
-        movie: getMovie(b.movie_id),
+        movie: await getMovie(b.movie_id),
         ...(b.snapshot ? JSON.parse(b.snapshot) : {}),
-      }));
+      }),
+    );
   async function body(req) {
+    const limit =
+      req.url.split('?')[0] === '/api/admin/uploads' ? 3 * 1024 * 1024 : 16384;
+    if (req.body !== undefined) {
+      let parsed;
+      try {
+        parsed = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
+      } catch {
+        fail(400, 'Invalid JSON request.');
+      }
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed))
+        fail(400, 'Invalid JSON request.');
+      if (Buffer.byteLength(JSON.stringify(parsed)) > limit)
+        fail(413, 'Request too large.');
+      return parsed;
+    }
     let data = '';
     for await (const chunk of req) {
       data += chunk;
-      if (Buffer.byteLength(data) > 16384) fail(413, 'Request too large.');
+      if (Buffer.byteLength(data) > limit) fail(413, 'Request too large.');
     }
     try {
       const parsed = JSON.parse(data || '{}');
@@ -71,7 +117,7 @@ export function createApp({
       fail(400, 'Invalid JSON request.');
     }
   }
-  const server = createServer(async (req, res) => {
+  const handle = async (req, res) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
     res.setHeader('X-Frame-Options', 'DENY');
@@ -135,7 +181,7 @@ export function createApp({
           .find((x) => x.startsWith('qs_session='))
           ?.slice(11) || '';
       const token = createHash('sha256').update(rawToken).digest('hex');
-      const user = db
+      const user = await db
         .prepare(
           'SELECT u.* FROM users u JOIN sessions s ON s.user_id=u.id WHERE s.token=? AND s.expires>?',
         )
@@ -149,22 +195,19 @@ export function createApp({
           fail(403, 'Administrator access required.');
       };
       if (path === '/api/health' && req.method === 'GET')
-        return json(200, { status: 'ok' });
+        return json(200, {
+          status: 'ok',
+        });
       if (path === '/api/me' && req.method === 'GET')
-        return json(200, { user: publicUser(user) });
+        return json(200, {
+          user: publicUser(user),
+        });
       if (
         ['/api/register', '/api/login'].includes(path) &&
         req.method === 'POST'
       ) {
-        const key = req.socket.remoteAddress;
-        const rate = attempts.get(key) || { count: 0, until: 0 };
-        if (rate.until < now().getTime()) {
-          rate.count = 0;
-          rate.until = now().getTime() + 900000;
-        }
-        if (++rate.count > 20)
+        if (req.rateLimited)
           fail(429, 'Too many sign-in attempts. Try again in 15 minutes.');
-        attempts.set(key, rate);
         const input = await body(req);
         const email =
           typeof input.email === 'string'
@@ -179,7 +222,7 @@ export function createApp({
           password.length > 128
         )
           fail(400, 'Enter a valid email and a password of 8–128 characters.');
-        let account = db
+        let account = await db
           .prepare('SELECT * FROM users WHERE email=?')
           .get(email);
         if (path === '/api/register') {
@@ -188,15 +231,19 @@ export function createApp({
             fail(400, 'Name must be 2–80 characters.');
           if (account) fail(409, 'An account with this email already exists.');
           const salt = randomBytes(16).toString('hex');
-          db.prepare(
-            'INSERT INTO users(name,email,password,role) VALUES(?,?,?,?)',
-          ).run(
-            name,
-            email,
-            `${salt}:${scryptSync(password, salt, 64).toString('hex')}`,
-            'customer',
-          );
-          account = db.prepare('SELECT * FROM users WHERE email=?').get(email);
+          await db
+            .prepare(
+              'INSERT INTO users(name,email,password,role) VALUES(?,?,?,?)',
+            )
+            .run(
+              name,
+              email,
+              `${salt}:${scryptSync(password, salt, 64).toString('hex')}`,
+              'customer',
+            );
+          account = await db
+            .prepare('SELECT * FROM users WHERE email=?')
+            .get(email);
         } else {
           const [salt, hash] = (
             account?.password || `${'0'.repeat(32)}:${'0'.repeat(128)}`
@@ -209,36 +256,42 @@ export function createApp({
         }
         // Admin access is provisioned only for existing accounts at server startup.
         const secret = randomBytes(32).toString('hex');
-        db.prepare('DELETE FROM sessions WHERE expires<=?').run(
-          now().getTime(),
-        );
-        db.prepare('INSERT INTO sessions VALUES(?,?,?)').run(
-          createHash('sha256').update(secret).digest('hex'),
-          account.id,
-          now().getTime() + 604800000,
-        );
+        await db
+          .prepare('DELETE FROM sessions WHERE expires<=?')
+          .run(now().getTime());
+        await db
+          .prepare('INSERT INTO sessions VALUES(?,?,?)')
+          .run(
+            createHash('sha256').update(secret).digest('hex'),
+            account.id,
+            now().getTime() + 604800000,
+          );
         res.setHeader(
           'Set-Cookie',
           `qs_session=${secret}; HttpOnly; SameSite=Lax; Path=/; Max-Age=604800${production ? '; Secure' : ''}`,
         );
-        return json(200, { user: publicUser(account) });
+        return json(200, {
+          user: publicUser(account),
+        });
       }
       if (path === '/api/logout' && req.method === 'POST') {
-        db.prepare('DELETE FROM sessions WHERE token=?').run(token);
+        await db.prepare('DELETE FROM sessions WHERE token=?').run(token);
         res.setHeader(
           'Set-Cookie',
           'qs_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0',
         );
-        return json(200, { ok: true });
+        return json(200, {
+          ok: true,
+        });
       }
       if (path === '/api/theatres' && req.method === 'GET')
-        return json(200, listTheatres());
+        return json(200, await listTheatres());
       if (path === '/api/movies' && req.method === 'GET')
         return json(
           200,
-          listMovies().map((movie) => ({
+          await mapAsync(await listMovies(), async (movie) => ({
             ...movie,
-            theatres: db
+            theatres: await db
               .prepare(
                 `SELECT DISTINCT t.* FROM theatres t JOIN shows s ON s.theatre_id=t.id WHERE s.movie_id=? AND s.active=1 AND s.starts_at>? ORDER BY t.name,t.id`,
               )
@@ -248,29 +301,35 @@ export function createApp({
       if (path === '/api/shows' && req.method === 'GET')
         return json(
           200,
-          db
-            .prepare(
-              'SELECT s.* FROM shows s JOIN movies m ON m.id=s.movie_id WHERE s.movie_id=? AND s.active=1 AND m.archived=0 AND s.starts_at>? ORDER BY s.starts_at',
-            )
-            .all(Number(url.searchParams.get('movie')), now().toISOString())
-            .map(withTheatre),
+          await mapAsync(
+            await db
+              .prepare(
+                'SELECT s.* FROM shows s JOIN movies m ON m.id=s.movie_id WHERE s.movie_id=? AND s.active=1 AND m.archived=0 AND s.starts_at>? ORDER BY s.starts_at',
+              )
+              .all(
+                Number(await url.searchParams.get('movie')),
+                now().toISOString(),
+              ),
+            withTheatre,
+          ),
         );
       if (path.startsWith('/api/shows/') && req.method === 'GET') {
-        const show = getShow(path.split('/')[3]);
+        const show = await getShow(path.split('/')[3]);
         if (
           !show ||
           !show.active ||
-          getMovie(show.movie_id)?.archived ||
+          (await getMovie(show.movie_id))?.archived ||
           show.starts_at <= now().toISOString()
         )
           fail(404, 'This screening is no longer available.');
         return json(200, {
           ...show,
-          movie: getMovie(show.movie_id),
-          occupied: db
-            .prepare('SELECT seat FROM seats WHERE show_id=?')
-            .all(show.id)
-            .map((s) => s.seat),
+          movie: await getMovie(show.movie_id),
+          occupied: (
+            await db
+              .prepare('SELECT seat FROM seats WHERE show_id=?')
+              .all(show.id)
+          ).map((s) => s.seat),
         });
       }
       if (path === '/api/favourites') {
@@ -278,35 +337,37 @@ export function createApp({
         if (req.method === 'GET')
           return json(
             200,
-            db
-              .prepare('SELECT movie_id FROM favourites WHERE user_id=?')
-              .all(user.id)
-              .map((f) => f.movie_id),
+            (
+              await db
+                .prepare('SELECT movie_id FROM favourites WHERE user_id=?')
+                .all(user.id)
+            ).map((f) => f.movie_id),
           );
         if (req.method === 'POST') {
           const { movieId, saved } = await body(req);
           if (
             !Number.isInteger(movieId) ||
-            !getMovie(movieId) ||
-            getMovie(movieId).archived ||
+            !(await getMovie(movieId)) ||
+            (await getMovie(movieId)).archived ||
             typeof saved !== 'boolean'
           )
             fail(400, 'Invalid favourite.');
           if (saved)
-            db.prepare('INSERT OR IGNORE INTO favourites VALUES(?,?)').run(
-              user.id,
-              movieId,
-            );
+            await db
+              .prepare('INSERT OR IGNORE INTO favourites VALUES(?,?)')
+              .run(user.id, movieId);
           else
-            db.prepare(
-              'DELETE FROM favourites WHERE user_id=? AND movie_id=?',
-            ).run(user.id, movieId);
-          return json(200, { ok: true });
+            await db
+              .prepare('DELETE FROM favourites WHERE user_id=? AND movie_id=?')
+              .run(user.id, movieId);
+          return json(200, {
+            ok: true,
+          });
         }
       }
       if (path === '/api/bookings') {
         requireUser();
-        if (req.method === 'GET') return json(200, getBookings(user.id));
+        if (req.method === 'GET') return json(200, await getBookings(user.id));
         if (req.method === 'POST') {
           const { showId, seats, expectedTotal, expectedLayoutVersion } =
             await body(req);
@@ -323,15 +384,15 @@ export function createApp({
             )
           )
             fail(400, 'Select between 1 and 8 valid, unique seats.');
-          const show = getShow(showId);
+          const show = await getShow(showId);
           if (
             !show ||
             !show.active ||
-            getMovie(show.movie_id)?.archived ||
+            (await getMovie(show.movie_id))?.archived ||
             show.starts_at <= now().toISOString()
           )
             fail(400, 'This screening is no longer available.');
-          const movie = getMovie(show.movie_id);
+          const movie = await getMovie(show.movie_id);
           if (!movie || movie.archived)
             fail(400, 'This movie is no longer available.');
           if (
@@ -360,47 +421,50 @@ export function createApp({
               'The ticket price has changed. Review the updated total and reserve again.',
             );
           const id = `QS-${randomBytes(6).toString('hex').toUpperCase()}`;
-          db.exec('BEGIN IMMEDIATE');
+          await db.exec('BEGIN IMMEDIATE');
           try {
-            const occupied = db
-              .prepare('SELECT seat FROM seats WHERE show_id=?')
-              .all(showId)
-              .map((s) => s.seat);
+            const occupied = (
+              await db
+                .prepare('SELECT seat FROM seats WHERE show_id=?')
+                .all(showId)
+            ).map((s) => s.seat);
             if (seats.some((s) => occupied.includes(s)))
               fail(
                 409,
                 'One or more seats were just reserved. Please choose again.',
               );
-            db.prepare(
-              'INSERT INTO bookings(id,user_id,show_id,seats,total,created_at,snapshot) VALUES(?,?,?,?,?,?,?)',
-            ).run(
-              id,
-              user.id,
-              showId,
-              JSON.stringify([...seats].sort()),
-              total,
-              now().toISOString(),
-              JSON.stringify({
-                movie,
-                date: show.date,
-                time: show.time,
-                starts_at: show.starts_at,
-                screen: show.screen,
-                theatre: show.theatre,
-                layout: show.layout,
-                layout_version: show.layout_version,
-              }),
-            );
+            await db
+              .prepare(
+                'INSERT INTO bookings(id,user_id,show_id,seats,total,created_at,snapshot) VALUES(?,?,?,?,?,?,?)',
+              )
+              .run(
+                id,
+                user.id,
+                showId,
+                JSON.stringify([...seats].sort()),
+                total,
+                now().toISOString(),
+                JSON.stringify({
+                  movie,
+                  date: show.date,
+                  time: show.time,
+                  starts_at: show.starts_at,
+                  screen: show.screen,
+                  theatre: show.theatre,
+                  layout: show.layout,
+                  layout_version: show.layout_version,
+                }),
+              );
             const insert = db.prepare('INSERT INTO seats VALUES(?,?,?)');
-            for (const seat of seats) insert.run(showId, seat, id);
-            db.exec('COMMIT');
+            for (const seat of seats) await insert.run(showId, seat, id);
+            await db.exec('COMMIT');
           } catch (error) {
-            db.exec('ROLLBACK');
+            await db.exec('ROLLBACK');
             throw error;
           }
           return json(
             201,
-            getBookings(user.id).find((b) => b.id === id),
+            (await getBookings(user.id)).find((b) => b.id === id),
           );
         }
       }
@@ -409,7 +473,7 @@ export function createApp({
         req.method === 'POST'
       ) {
         requireUser();
-        const booking = db
+        const booking = await db
           .prepare(
             'SELECT b.*,s.starts_at FROM bookings b JOIN shows s ON s.id=b.show_id WHERE b.id=? AND b.user_id=?',
           )
@@ -417,35 +481,55 @@ export function createApp({
         if (!booking) fail(404, 'Reservation not found.');
         if (booking.starts_at <= now().toISOString())
           fail(400, 'This screening has already started.');
-        db.exec('BEGIN IMMEDIATE');
+        await db.exec('BEGIN IMMEDIATE');
         try {
-          db.prepare("UPDATE bookings SET status='cancelled' WHERE id=?").run(
-            booking.id,
-          );
-          db.prepare('DELETE FROM seats WHERE booking_id=?').run(booking.id);
-          db.exec('COMMIT');
+          await db
+            .prepare("UPDATE bookings SET status='cancelled' WHERE id=?")
+            .run(booking.id);
+          await db
+            .prepare('DELETE FROM seats WHERE booking_id=?')
+            .run(booking.id);
+          await db.exec('COMMIT');
         } catch (e) {
-          db.exec('ROLLBACK');
+          await db.exec('ROLLBACK');
           throw e;
         }
-        return json(200, { ok: true });
+        return json(200, {
+          ok: true,
+        });
+      }
+      if (path === '/api/admin/uploads' && req.method === 'POST') {
+        requireUser();
+        if (user.role !== 'admin')
+          fail(403, 'Only a super admin can upload movie images.');
+        return json(201, await storeImage(await body(req)));
       }
       if (path.startsWith('/api/admin')) {
         requireAdmin();
         if (path === '/api/admin' && req.method === 'GET') {
-          const theatres = listTheatres().filter((t) =>
-            management.canManage(user, t.id),
+          const theatres = await filterAsync(
+            await listTheatres(),
+            async (t) => await management.canManage(user, t.id),
           );
-          const shows = db
-            .prepare(
-              'SELECT s.*, (SELECT count(*) FROM seats WHERE show_id=s.id) AS occupied, (SELECT count(*) FROM bookings WHERE show_id=s.id) AS booking_count FROM shows s ORDER BY starts_at DESC',
+          const shows = (
+            await mapAsync(
+              await filterAsync(
+                await db
+                  .prepare(
+                    'SELECT s.*, (SELECT count(*) FROM seats WHERE show_id=s.id) AS occupied, (SELECT count(*) FROM bookings WHERE show_id=s.id) AS booking_count FROM shows s ORDER BY starts_at DESC',
+                  )
+                  .all(),
+                async (s) => await management.canManage(user, s.theatre_id),
+              ),
+              withTheatre,
             )
-            .all()
-            .filter((s) => management.canManage(user, s.theatre_id))
-            .map(withTheatre)
-            .map((s) => ({ ...s, capacity: layoutSeats(s.layout).length }));
-          const bookings = getBookings().filter((b) =>
-            management.canManage(user, b.theatre_id),
+          ).map((s) => ({
+            ...s,
+            capacity: layoutSeats(s.layout).length,
+          }));
+          const bookings = await filterAsync(
+            await getBookings(),
+            async (b) => await management.canManage(user, b.theatre_id),
           );
           const stats = theatres.map((t) => {
             const screenings = shows.filter((s) => s.theatre_id === t.id);
@@ -473,30 +557,36 @@ export function createApp({
             };
           });
           return json(200, {
-            movies: listMovies(user.role === 'admin'),
+            movies: await listMovies(user.role === 'admin'),
             theatres,
             shows,
             bookings,
             stats,
-            screens: management
-              .screens()
-              .filter((s) => management.canManage(user, s.theatre_id)),
+            screens: await filterAsync(
+              await management.screens(),
+              async (s) => await management.canManage(user, s.theatre_id),
+            ),
             users:
               user.role === 'admin'
-                ? db.prepare('SELECT count(*) AS n FROM users').get().n
+                ? (await db.prepare('SELECT count(*) AS n FROM users').get()).n
                 : new Set(bookings.map((b) => b.user_id)).size,
             customers:
               user.role === 'admin'
-                ? db
-                    .prepare(
-                      'SELECT u.id,u.name,u.email,u.role,(SELECT count(*) FROM bookings WHERE user_id=u.id) AS booking_count FROM users u ORDER BY u.id DESC',
-                    )
-                    .all()
-                    .map((u) => ({ ...u, theatre_ids: management.assigned(u) }))
+                ? await mapAsync(
+                    await db
+                      .prepare(
+                        'SELECT u.id,u.name,u.email,u.role,(SELECT count(*) FROM bookings WHERE user_id=u.id) AS booking_count FROM users u ORDER BY u.id DESC',
+                      )
+                      .all(),
+                    async (u) => ({
+                      ...u,
+                      theatre_ids: await management.assigned(u),
+                    }),
+                  )
                 : [],
             audit:
               user.role === 'admin'
-                ? db
+                ? await db
                     .prepare(
                       'SELECT a.*,u.name AS actor FROM audit_log a LEFT JOIN users u ON u.id=a.actor_id ORDER BY a.id DESC LIMIT 100',
                     )
@@ -507,7 +597,7 @@ export function createApp({
         if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method))
           return json(
             req.method === 'POST' ? 201 : 200,
-            adminAction(path, req.method, await body(req), user),
+            await adminAction(path, req.method, await body(req), user),
           );
       }
       fail(404, 'Endpoint not found.');
@@ -519,11 +609,75 @@ export function createApp({
           : 'Something went wrong. Please try again.',
       });
     }
+  };
+  const server = createServer(async (req, res) => {
+    let payload;
+    const buffered = Object.create(res);
+    buffered.setHeader = (...args) => res.setHeader(...args);
+    buffered.writeHead = (status, headers) => {
+      payload = { status, headers };
+    };
+    buffered.end = (body) => {
+      payload = { ...payload, body };
+    };
+    try {
+      if (
+        req.method === 'POST' &&
+        ['/api/login', '/api/register'].includes(req.url.split('?')[0])
+      ) {
+        req.rateLimited = await db.scope(async () => {
+          const address = process.env.VERCEL
+            ? req.headers['x-vercel-forwarded-for'] || req.socket.remoteAddress
+            : req.socket.remoteAddress;
+          const key = createHash('sha256')
+            .update(String(address || 'unknown'))
+            .digest('hex');
+          await db
+            .prepare('DELETE FROM rate_limits WHERE expires<=?')
+            .run(now().getTime());
+          const rate = await db
+            .prepare('SELECT * FROM rate_limits WHERE key=?')
+            .get(key);
+          if (rate?.count >= 20) return true;
+          if (rate)
+            await db
+              .prepare('UPDATE rate_limits SET count=count+1 WHERE key=?')
+              .run(key);
+          else
+            await db
+              .prepare('INSERT INTO rate_limits VALUES(?,?,?)')
+              .run(key, 1, now().getTime() + 900000);
+          return false;
+        }, true);
+      }
+      await db.scope(async () => {
+        await handle(req, buffered);
+        if (payload?.status >= 400)
+          throw Object.assign(new Error('Response rollback'), {
+            responseRollback: true,
+          });
+      }, !['GET', 'HEAD'].includes(req.method));
+    } catch (error) {
+      if (!error.responseRollback) {
+        console.error('Request failed:', error.code || error.message);
+        payload = {
+          status: 503,
+          headers: {
+            'Content-Type': 'application/json',
+            'Cache-Control': 'no-store',
+          },
+          body: JSON.stringify({
+            error:
+              'The booking service is temporarily unavailable. Please retry.',
+          }),
+        };
+      }
+    }
+    res.writeHead(payload?.status || 500, payload?.headers);
+    res.end(payload?.body);
   });
-  if (adminEmail)
-    db.prepare("UPDATE users SET role='admin' WHERE email=?").run(
-      adminEmail.trim().toLowerCase(),
-    );
-  server.on('close', () => db.close());
+  server.on('close', () => {
+    server.databaseClosed = db.close();
+  });
   return server;
 }

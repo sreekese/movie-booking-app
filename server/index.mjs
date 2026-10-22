@@ -1,7 +1,7 @@
 import { createApp } from './app.mjs';
 const production = process.env.NODE_ENV === 'production';
 const port = Number(process.env.PORT || 3001);
-const server = createApp({
+const server = await createApp({
   dbPath: process.env.DATABASE_PATH || 'server/data/quickshow.sqlite',
   production,
   adminEmail: process.env.ADMIN_EMAIL,

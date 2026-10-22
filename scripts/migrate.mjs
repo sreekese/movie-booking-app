@@ -4,7 +4,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { createApp } from '../server/app.mjs';
 
 const dbPath = process.env.DATABASE_PATH || 'server/data/quickshow.sqlite';
-if (existsSync(dbPath)) {
+if (!process.env.DATABASE_URL && existsSync(dbPath)) {
   const backupDir = join(dirname(resolve(dbPath)), 'backups');
   mkdirSync(backupDir, { recursive: true });
   const backupPath = join(
@@ -19,6 +19,7 @@ if (existsSync(dbPath)) {
   }
   console.log(`Database backup created: ${backupPath}`);
 }
-const server = createApp({ dbPath, adminEmail: process.env.ADMIN_EMAIL });
+const server = await createApp({ dbPath, adminEmail: process.env.ADMIN_EMAIL });
 await new Promise((resolve) => server.close(resolve));
+await server.databaseClosed;
 console.log('Database migration complete. Existing records retained.');

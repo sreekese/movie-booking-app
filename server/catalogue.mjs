@@ -1,35 +1,41 @@
 import { theatreManagement } from './theatre-management.mjs';
 import seedMovies from '../src/data/data.js';
 import { randomBytes, scryptSync } from 'node:crypto';
-
-export function catalogue(db, now) {
+export async function catalogue(db, now) {
   const fail = (status, message) => {
-    throw Object.assign(new Error(message), { status });
+    throw Object.assign(new Error(message), {
+      status,
+    });
   };
-  const transaction = (fn) => {
-    db.exec('BEGIN IMMEDIATE');
+  const transaction = async (fn) => {
+    await db.exec('BEGIN IMMEDIATE');
     try {
-      const value = fn();
-      db.exec('COMMIT');
+      const value = await fn();
+      await db.exec('COMMIT');
       return value;
     } catch (error) {
-      db.exec('ROLLBACK');
+      await db.exec('ROLLBACK');
       throw error;
     }
   };
   const movie = (row) =>
     row
-      ? { ...JSON.parse(row.data), id: row.id, archived: !!row.archived }
+      ? {
+          ...JSON.parse(row.data),
+          id: row.id,
+          archived: !!row.archived,
+        }
       : null;
-  const getMovie = (id) =>
-    movie(db.prepare('SELECT * FROM movies WHERE id=?').get(id));
-  const listMovies = (all = false) =>
-    db
-      .prepare(
-        `SELECT * FROM movies ${all ? '' : 'WHERE archived=0'} ORDER BY id`,
-      )
-      .all()
-      .map(movie);
+  const getMovie = async (id) =>
+    movie(await db.prepare('SELECT * FROM movies WHERE id=?').get(id));
+  const listMovies = async (all = false) =>
+    (
+      await db
+        .prepare(
+          `SELECT * FROM movies ${all ? '' : 'WHERE archived=0'} ORDER BY id`,
+        )
+        .all()
+    ).map(movie);
   const trailers = [
     'TcMBFSGVi1c',
     'JfVOs4VSpmA',
@@ -37,20 +43,22 @@ export function catalogue(db, now) {
     'zSWdZVtXT7E',
     'zAGVQLHvwOY',
   ];
-  transaction(() => {
-    db.exec(`CREATE TABLE IF NOT EXISTS migrations(name TEXT PRIMARY KEY);
+  await transaction(async () => {
+    await db.exec(`CREATE TABLE IF NOT EXISTS migrations(name TEXT PRIMARY KEY);
       CREATE TABLE IF NOT EXISTS movies(id INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT NOT NULL, archived INTEGER NOT NULL DEFAULT 0);
       CREATE TABLE IF NOT EXISTS audit_log(id INTEGER PRIMARY KEY, actor_id INTEGER, action TEXT NOT NULL, entity_id TEXT NOT NULL, created_at TEXT NOT NULL);`);
     if (
-      !db.prepare("SELECT 1 FROM migrations WHERE name='catalogue-v1'").get()
+      !(await db
+        .prepare("SELECT 1 FROM migrations WHERE name='catalogue-v1'")
+        .get())
     ) {
-      db.exec(
+      await db.exec(
         "ALTER TABLE shows ADD COLUMN screen TEXT NOT NULL DEFAULT '1'; ALTER TABLE bookings ADD COLUMN snapshot TEXT;",
       );
-      db.prepare('UPDATE shows SET screen=CAST(movie_id AS TEXT)').run();
+      await db.prepare('UPDATE shows SET screen=CAST(movie_id AS TEXT)').run();
       const insert = db.prepare('INSERT INTO movies(id,data) VALUES(?,?)');
       for (const m of seedMovies)
-        insert.run(
+        await insert.run(
           m.id,
           JSON.stringify({
             ...m,
@@ -76,7 +84,7 @@ export function catalogue(db, now) {
           for (const [i, time] of m.showTimings.entries()) {
             const [, h, minute, period] = time.match(/(\d+):(\d+) (AM|PM)/);
             const hour = (Number(h) % 12) + (period === 'PM' ? 12 : 0);
-            addShow.run(
+            await addShow.run(
               `${m.id}-${date}-${i}`,
               m.id,
               date,
@@ -88,14 +96,14 @@ export function catalogue(db, now) {
             );
           }
       }
-      for (const b of db
+      for (const b of await db
         .prepare(
           'SELECT b.id AS booking_id,s.* FROM bookings b JOIN shows s ON s.id=b.show_id',
         )
         .all()) {
-        db.prepare('UPDATE bookings SET snapshot=? WHERE id=?').run(
+        await db.prepare('UPDATE bookings SET snapshot=? WHERE id=?').run(
           JSON.stringify({
-            movie: getMovie(b.movie_id),
+            movie: await getMovie(b.movie_id),
             date: b.date,
             time: b.time,
             starts_at: b.starts_at,
@@ -104,46 +112,49 @@ export function catalogue(db, now) {
           b.booking_id,
         );
       }
-      db.prepare("INSERT INTO migrations VALUES('catalogue-v1')").run();
+      await db.prepare("INSERT INTO migrations VALUES('catalogue-v1')").run();
     }
   });
-  transaction(() => {
+  await transaction(async () => {
     if (
-      !db.prepare("SELECT 1 FROM migrations WHERE name='theatres-v1'").get()
+      !(await db
+        .prepare("SELECT 1 FROM migrations WHERE name='theatres-v1'")
+        .get())
     ) {
-      db.exec(`CREATE TABLE theatres(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, city TEXT NOT NULL, address TEXT NOT NULL);
+      await db.exec(`CREATE TABLE theatres(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, city TEXT NOT NULL, address TEXT NOT NULL);
         INSERT INTO theatres(id,name,city,address) VALUES(1,'Quick Show Cinema','Demo location','Address not configured');
         ALTER TABLE shows ADD COLUMN theatre_id INTEGER REFERENCES theatres(id);
         UPDATE shows SET theatre_id=1;
         CREATE INDEX shows_theatre_screen ON shows(theatre_id,screen);`);
-      for (const b of db.prepare('SELECT id,snapshot FROM bookings').all()) {
+      for (const b of await db
+        .prepare('SELECT id,snapshot FROM bookings')
+        .all()) {
         const snapshot = JSON.parse(b.snapshot || '{}');
-        snapshot.theatre = db
+        snapshot.theatre = await db
           .prepare('SELECT * FROM theatres WHERE id=1')
           .get();
-        db.prepare('UPDATE bookings SET snapshot=? WHERE id=?').run(
-          JSON.stringify(snapshot),
-          b.id,
-        );
+        await db
+          .prepare('UPDATE bookings SET snapshot=? WHERE id=?')
+          .run(JSON.stringify(snapshot), b.id);
       }
-      db.prepare("INSERT INTO migrations VALUES('theatres-v1')").run();
+      await db.prepare("INSERT INTO migrations VALUES('theatres-v1')").run();
     }
   });
-  const management = theatreManagement(db, now);
-  const listTheatres = () =>
-    db.prepare('SELECT * FROM theatres ORDER BY name,id').all();
-  const withTheatre = (show) =>
+  const management = await theatreManagement(db, now);
+  const listTheatres = async () =>
+    await db.prepare('SELECT * FROM theatres ORDER BY name,id').all();
+  const withTheatre = async (show) =>
     show
       ? {
           ...show,
           layout: JSON.parse(show.layout),
-          theatre: db
+          theatre: await db
             .prepare('SELECT * FROM theatres WHERE id=?')
             .get(show.theatre_id),
         }
       : show;
-  const audit = (user, action, id) =>
-    db
+  const audit = async (user, action, id) =>
+    await db
       .prepare(
         'INSERT INTO audit_log(actor_id,action,entity_id,created_at) VALUES(?,?,?,?)',
       )
@@ -197,8 +208,12 @@ export function catalogue(db, now) {
     const duration = text(input.duration, 'Duration', 12);
     if (
       !/^(?:[0-5]h )?\d{1,3}m$/.test(duration) ||
-      minutes({ duration }) < 1 ||
-      minutes({ duration }) > 359 ||
+      minutes({
+        duration,
+      }) < 1 ||
+      minutes({
+        duration,
+      }) > 359 ||
       (duration.includes('h') &&
         Number(duration.split(' ')[1].slice(0, -1)) > 59)
     )
@@ -235,10 +250,14 @@ export function catalogue(db, now) {
     const match = m.duration.match(/^(?:(\d+)h )?(\d+)m$/);
     return match ? Number(match[1] || 0) * 60 + Number(match[2]) : 180;
   }
-  const showBookings = (id) =>
-    db.prepare('SELECT count(*) AS n FROM bookings WHERE show_id=?').get(id).n;
-  function validateShow(input, existingId = '') {
-    const m = getMovie(
+  const showBookings = async (id) =>
+    (
+      await db
+        .prepare('SELECT count(*) AS n FROM bookings WHERE show_id=?')
+        .get(id)
+    ).n;
+  async function validateShow(input, existingId = '') {
+    const m = await getMovie(
       number(input.movie_id, 'Movie ID', 1, Number.MAX_SAFE_INTEGER, true),
     );
     if (!m || m.archived) fail(400, 'Choose a published movie.');
@@ -258,20 +277,22 @@ export function catalogue(db, now) {
       Number.MAX_SAFE_INTEGER,
       true,
     );
-    if (!db.prepare('SELECT id FROM theatres WHERE id=?').get(theatre_id))
+    if (
+      !(await db.prepare('SELECT id FROM theatres WHERE id=?').get(theatre_id))
+    )
       fail(400, 'Choose an existing theatre.');
     const screen = text(input.screen, 'Screen', 30);
     if (typeof input.active !== 'boolean')
       fail(400, 'Invalid screening status.');
     const end = Date.parse(starts_at) + (minutes(m) + 15) * 60000;
     if (input.active) {
-      const existing = db
+      const existing = await db
         .prepare(
           'SELECT * FROM shows WHERE id<>? AND active=1 AND lower(screen)=lower(?) AND theatre_id=?',
         )
         .all(existingId, screen, theatre_id);
       for (const other of existing) {
-        const otherMovie = getMovie(other.movie_id);
+        const otherMovie = await getMovie(other.movie_id);
         if (
           Date.parse(other.starts_at) < end &&
           Date.parse(other.starts_at) + (minutes(otherMovie) + 15) * 60000 >
@@ -285,7 +306,7 @@ export function catalogue(db, now) {
     }
     const [hour, minute] = input.time.split(':').map(Number);
     return {
-      ...management.showLayout(theatre_id, screen),
+      ...(await management.showLayout(theatre_id, screen)),
       theatre_id,
       movie_id: m.id,
       date,
@@ -295,23 +316,25 @@ export function catalogue(db, now) {
       active: Number(input.active),
     };
   }
-  function adminAction(path, method, input, user) {
-    return transaction(() => {
-      management.authorize(user, path, input);
+  async function adminAction(path, method, input, user) {
+    return await transaction(async () => {
+      await management.authorize(user, path, input);
       if (/^\/api\/admin\/screens(?:\/\d+)?$/.test(path))
-        return management.screenAction(path, method, input, user);
+        return await management.screenAction(path, method, input, user);
       const id = path.split('/')[4];
       if (
         path === '/api/admin/theatres' ||
         /^\/api\/admin\/theatres\/\d+$/.test(path)
       ) {
         const existing = id
-          ? db.prepare('SELECT * FROM theatres WHERE id=?').get(Number(id))
+          ? await db
+              .prepare('SELECT * FROM theatres WHERE id=?')
+              .get(Number(id))
           : null;
         if (id && !existing) fail(404, 'Theatre not found.');
         if (method === 'DELETE' && existing) {
           if (
-            db
+            await db
               .prepare('SELECT 1 FROM shows WHERE theatre_id=? LIMIT 1')
               .get(existing.id)
           )
@@ -319,10 +342,14 @@ export function catalogue(db, now) {
               409,
               'Remove this theatre’s screenings first. Booking history must be retained.',
             );
-          db.prepare('DELETE FROM screens WHERE theatre_id=?').run(existing.id);
-          db.prepare('DELETE FROM theatres WHERE id=?').run(existing.id);
-          audit(user, 'theatre.deleted', id);
-          return { ok: true };
+          await db
+            .prepare('DELETE FROM screens WHERE theatre_id=?')
+            .run(existing.id);
+          await db.prepare('DELETE FROM theatres WHERE id=?').run(existing.id);
+          await audit(user, 'theatre.deleted', id);
+          return {
+            ok: true,
+          };
         }
         if ((method === 'POST' && !id) || (method === 'PUT' && existing)) {
           const values = [
@@ -333,182 +360,228 @@ export function catalogue(db, now) {
           const theatreId = existing
             ? existing.id
             : Number(
-                db
-                  .prepare(
-                    'INSERT INTO theatres(name,city,address) VALUES(?,?,?)',
-                  )
-                  .run(...values).lastInsertRowid,
+                (
+                  await db
+                    .prepare(
+                      'INSERT INTO theatres(name,city,address) VALUES(?,?,?)',
+                    )
+                    .run(...values)
+                ).lastInsertRowid,
               );
           if (existing)
-            db.prepare(
-              'UPDATE theatres SET name=?,city=?,address=? WHERE id=?',
-            ).run(...values, theatreId);
-          audit(
+            await db
+              .prepare('UPDATE theatres SET name=?,city=?,address=? WHERE id=?')
+              .run(...values, theatreId);
+          await audit(
             user,
             existing ? 'theatre.updated' : 'theatre.created',
             theatreId,
           );
-          return db.prepare('SELECT * FROM theatres WHERE id=?').get(theatreId);
+          return await db
+            .prepare('SELECT * FROM theatres WHERE id=?')
+            .get(theatreId);
         }
       }
       if (path === '/api/admin/movies' && method === 'POST') {
         const data = validateMovie(input);
-        const result = db
+        const result = await db
           .prepare('INSERT INTO movies(data) VALUES(?)')
           .run(JSON.stringify(data));
-        audit(user, 'movie.created', result.lastInsertRowid);
-        return getMovie(Number(result.lastInsertRowid));
+        await audit(user, 'movie.created', result.lastInsertRowid);
+        return await getMovie(Number(result.lastInsertRowid));
       }
       if (/^\/api\/admin\/movies\/\d+$/.test(path)) {
-        const m = getMovie(Number(id));
+        const m = await getMovie(Number(id));
         if (!m) fail(404, 'Movie not found.');
         if (method === 'PUT') {
           const data = validateMovie(input);
           if (
             data.duration !== m.duration &&
-            db
-              .prepare(
-                'SELECT count(*) AS n FROM shows WHERE movie_id=? AND starts_at>?',
-              )
-              .get(m.id, now().toISOString()).n
+            (
+              await db
+                .prepare(
+                  'SELECT count(*) AS n FROM shows WHERE movie_id=? AND starts_at>?',
+                )
+                .get(m.id, now().toISOString())
+            ).n
           )
             fail(
               409,
               'Remove upcoming screenings before changing the film duration.',
             );
-          db.prepare('UPDATE movies SET data=? WHERE id=?').run(
-            JSON.stringify(data),
-            m.id,
-          );
-          audit(user, 'movie.updated', id);
-          return getMovie(m.id);
+          await db
+            .prepare('UPDATE movies SET data=? WHERE id=?')
+            .run(JSON.stringify(data), m.id);
+          await audit(user, 'movie.updated', id);
+          return await getMovie(m.id);
         }
         if (method === 'PATCH') {
           if (typeof input.archived !== 'boolean')
             fail(400, 'Invalid archive status.');
           if (
             input.archived &&
-            db
-              .prepare(
-                "SELECT count(*) AS n FROM bookings b JOIN shows s ON s.id=b.show_id WHERE s.movie_id=? AND b.status='reserved' AND s.starts_at>?",
-              )
-              .get(m.id, now().toISOString()).n
+            (
+              await db
+                .prepare(
+                  "SELECT count(*) AS n FROM bookings b JOIN shows s ON s.id=b.show_id WHERE s.movie_id=? AND b.status='reserved' AND s.starts_at>?",
+                )
+                .get(m.id, now().toISOString())
+            ).n
           )
             fail(
               409,
               'Cancel upcoming reservations before archiving this movie.',
             );
-          db.prepare('UPDATE movies SET archived=? WHERE id=?').run(
-            Number(input.archived),
-            m.id,
-          );
+          await db
+            .prepare('UPDATE movies SET archived=? WHERE id=?')
+            .run(Number(input.archived), m.id);
           if (input.archived)
-            db.prepare('UPDATE shows SET active=0 WHERE movie_id=?').run(m.id);
-          audit(user, input.archived ? 'movie.archived' : 'movie.restored', id);
-          return getMovie(m.id);
+            await db
+              .prepare('UPDATE shows SET active=0 WHERE movie_id=?')
+              .run(m.id);
+          await audit(
+            user,
+            input.archived ? 'movie.archived' : 'movie.restored',
+            id,
+          );
+          return await getMovie(m.id);
         }
         if (method === 'DELETE') {
           if (
-            db
-              .prepare('SELECT count(*) AS n FROM shows WHERE movie_id=?')
-              .get(m.id).n
+            (
+              await db
+                .prepare('SELECT count(*) AS n FROM shows WHERE movie_id=?')
+                .get(m.id)
+            ).n
           )
             fail(
               409,
               'Remove this movie’s screenings first, or archive the movie to retain history.',
             );
-          db.prepare('DELETE FROM favourites WHERE movie_id=?').run(m.id);
-          db.prepare('DELETE FROM movies WHERE id=?').run(m.id);
-          audit(user, 'movie.deleted', id);
-          return { ok: true };
+          await db.prepare('DELETE FROM favourites WHERE movie_id=?').run(m.id);
+          await db.prepare('DELETE FROM movies WHERE id=?').run(m.id);
+          await audit(user, 'movie.deleted', id);
+          return {
+            ok: true,
+          };
         }
       }
       if (path === '/api/admin/shows' && method === 'POST') {
-        const s = validateShow(input);
+        const s = await validateShow(input);
         const showId = `show-${randomBytes(8).toString('hex')}`;
-        db.prepare(
-          'INSERT INTO shows(id,movie_id,date,time,starts_at,screen,active,theatre_id,layout,layout_version) VALUES(?,?,?,?,?,?,?,?,?,?)',
-        ).run(
-          showId,
-          s.movie_id,
-          s.date,
-          s.time,
-          s.starts_at,
-          s.screen,
-          s.active,
-          s.theatre_id,
-          s.layout,
-          s.layout_version,
-        );
-        audit(user, 'show.created', showId);
-        return { id: showId, ...s };
+        await db
+          .prepare(
+            'INSERT INTO shows(id,movie_id,date,time,starts_at,screen,active,theatre_id,layout,layout_version) VALUES(?,?,?,?,?,?,?,?,?,?)',
+          )
+          .run(
+            showId,
+            s.movie_id,
+            s.date,
+            s.time,
+            s.starts_at,
+            s.screen,
+            s.active,
+            s.theatre_id,
+            s.layout,
+            s.layout_version,
+          );
+        await audit(user, 'show.created', showId);
+        return {
+          id: showId,
+          ...s,
+        };
       }
       if (/^\/api\/admin\/shows\/[^/]+$/.test(path)) {
-        const s = db.prepare('SELECT * FROM shows WHERE id=?').get(id);
+        const s = await db.prepare('SELECT * FROM shows WHERE id=?').get(id);
         if (!s) fail(404, 'Screening not found.');
         if (method === 'PUT' || method === 'DELETE') {
-          if (showBookings(id))
+          if (await showBookings(id))
             fail(
               409,
               'This screening has booking history. Cancel reservations or disable it instead; its details cannot be changed or deleted.',
             );
           if (method === 'DELETE') {
-            db.prepare('DELETE FROM shows WHERE id=?').run(id);
-            audit(user, 'show.deleted', id);
-            return { ok: true };
+            await db.prepare('DELETE FROM shows WHERE id=?').run(id);
+            await audit(user, 'show.deleted', id);
+            return {
+              ok: true,
+            };
           }
-          const value = validateShow(input, id);
-          db.prepare(
-            'UPDATE shows SET movie_id=?,date=?,time=?,starts_at=?,screen=?,active=?,theatre_id=?,layout=?,layout_version=? WHERE id=?',
-          ).run(
-            value.movie_id,
-            value.date,
-            value.time,
-            value.starts_at,
-            value.screen,
-            value.active,
-            value.theatre_id,
-            value.layout,
-            value.layout_version,
+          const value = await validateShow(input, id);
+          await db
+            .prepare(
+              'UPDATE shows SET movie_id=?,date=?,time=?,starts_at=?,screen=?,active=?,theatre_id=?,layout=?,layout_version=? WHERE id=?',
+            )
+            .run(
+              value.movie_id,
+              value.date,
+              value.time,
+              value.starts_at,
+              value.screen,
+              value.active,
+              value.theatre_id,
+              value.layout,
+              value.layout_version,
+              id,
+            );
+          await audit(user, 'show.updated', id);
+          return {
             id,
-          );
-          audit(user, 'show.updated', id);
-          return { id, ...value };
+            ...value,
+          };
         }
         if (method === 'PATCH') {
           if (typeof input.active !== 'boolean')
             fail(400, 'Invalid screening status.');
           if (
             !input.active &&
-            db
-              .prepare('SELECT count(*) AS n FROM seats WHERE show_id=?')
-              .get(id).n
+            (
+              await db
+                .prepare('SELECT count(*) AS n FROM seats WHERE show_id=?')
+                .get(id)
+            ).n
           )
             fail(409, 'A screening with reservations cannot be disabled.');
           if (input.active) {
             const localTime = new Date(Date.parse(s.starts_at) + 330 * 60000)
               .toISOString()
               .slice(11, 16);
-            validateShow({ ...s, time: localTime, active: true }, id);
+            await validateShow(
+              {
+                ...s,
+                time: localTime,
+                active: true,
+              },
+              id,
+            );
           }
-          db.prepare('UPDATE shows SET active=? WHERE id=?').run(
-            Number(input.active),
+          await db
+            .prepare('UPDATE shows SET active=? WHERE id=?')
+            .run(Number(input.active), id);
+          await audit(
+            user,
+            input.active ? 'show.enabled' : 'show.disabled',
             id,
           );
-          audit(user, input.active ? 'show.enabled' : 'show.disabled', id);
-          return { ok: true };
+          return {
+            ok: true,
+          };
         }
       }
       if (
         /^\/api\/admin\/bookings\/[^/]+\/cancel$/.test(path) &&
         method === 'POST'
       ) {
-        const b = db.prepare('SELECT * FROM bookings WHERE id=?').get(id);
+        const b = await db.prepare('SELECT * FROM bookings WHERE id=?').get(id);
         if (!b) fail(404, 'Reservation not found.');
-        db.prepare("UPDATE bookings SET status='cancelled' WHERE id=?").run(id);
-        db.prepare('DELETE FROM seats WHERE booking_id=?').run(id);
-        audit(user, 'booking.cancelled', id);
-        return { ok: true };
+        await db
+          .prepare("UPDATE bookings SET status='cancelled' WHERE id=?")
+          .run(id);
+        await db.prepare('DELETE FROM seats WHERE booking_id=?').run(id);
+        await audit(user, 'booking.cancelled', id);
+        return {
+          ok: true,
+        };
       }
       if (path === '/api/admin/users' && method === 'POST') {
         const name = text(input.name, 'Name', 80);
@@ -524,10 +597,10 @@ export function catalogue(db, now) {
           input.password.length > 128
         )
           fail(400, 'Password must be 8–128 characters.');
-        if (db.prepare('SELECT id FROM users WHERE email=?').get(email))
+        if (await db.prepare('SELECT id FROM users WHERE email=?').get(email))
           fail(409, 'This email is already registered.');
         const salt = randomBytes(16).toString('hex');
-        const result = db
+        const result = await db
           .prepare(
             'INSERT INTO users(name,email,password,role) VALUES(?,?,?,?)',
           )
@@ -537,8 +610,8 @@ export function catalogue(db, now) {
             `${salt}:${scryptSync(input.password, salt, 64).toString('hex')}`,
             input.role,
           );
-        management.assignments(Number(result.lastInsertRowid), input);
-        audit(user, 'user.created', result.lastInsertRowid);
+        await management.assignments(Number(result.lastInsertRowid), input);
+        await audit(user, 'user.created', result.lastInsertRowid);
         return {
           id: Number(result.lastInsertRowid),
           name,
@@ -547,7 +620,7 @@ export function catalogue(db, now) {
         };
       }
       if (/^\/api\/admin\/users\/\d+$/.test(path)) {
-        const account = db
+        const account = await db
           .prepare('SELECT id,role FROM users WHERE id=?')
           .get(Number(id));
         if (!account) fail(404, 'Account not found.');
@@ -558,8 +631,11 @@ export function catalogue(db, now) {
           fail(409, 'You cannot delete or demote your own admin account.');
         if (
           account.role === 'admin' &&
-          db.prepare("SELECT count(*) AS n FROM users WHERE role='admin'").get()
-            .n <= 1 &&
+          (
+            await db
+              .prepare("SELECT count(*) AS n FROM users WHERE role='admin'")
+              .get()
+          ).n <= 1 &&
           (method === 'DELETE' || input.role !== 'admin')
         )
           fail(409, 'Keep at least one administrator.');
@@ -572,38 +648,47 @@ export function catalogue(db, now) {
           )
             fail(400, 'Enter a valid email and role.');
           if (
-            db
+            await db
               .prepare('SELECT id FROM users WHERE email=? AND id<>?')
               .get(email, account.id)
           )
             fail(409, 'This email is already registered.');
-          db.prepare('UPDATE users SET name=?,email=?,role=? WHERE id=?').run(
-            name,
-            email,
-            input.role,
-            account.id,
-          );
-          management.assignments(account.id, input);
+          await db
+            .prepare('UPDATE users SET name=?,email=?,role=? WHERE id=?')
+            .run(name, email, input.role, account.id);
+          await management.assignments(account.id, input);
           if (input.role !== account.role)
-            db.prepare('DELETE FROM sessions WHERE user_id=?').run(account.id);
-          audit(user, 'user.updated', id);
-          return { ok: true };
+            await db
+              .prepare('DELETE FROM sessions WHERE user_id=?')
+              .run(account.id);
+          await audit(user, 'user.updated', id);
+          return {
+            ok: true,
+          };
         }
         if (method === 'DELETE') {
           if (
-            db
-              .prepare('SELECT count(*) AS n FROM bookings WHERE user_id=?')
-              .get(account.id).n
+            (
+              await db
+                .prepare('SELECT count(*) AS n FROM bookings WHERE user_id=?')
+                .get(account.id)
+            ).n
           )
             fail(
               409,
               'This customer has booking history and cannot be deleted.',
             );
-          db.prepare('DELETE FROM sessions WHERE user_id=?').run(account.id);
-          db.prepare('DELETE FROM favourites WHERE user_id=?').run(account.id);
-          db.prepare('DELETE FROM users WHERE id=?').run(account.id);
-          audit(user, 'user.deleted', id);
-          return { ok: true };
+          await db
+            .prepare('DELETE FROM sessions WHERE user_id=?')
+            .run(account.id);
+          await db
+            .prepare('DELETE FROM favourites WHERE user_id=?')
+            .run(account.id);
+          await db.prepare('DELETE FROM users WHERE id=?').run(account.id);
+          await audit(user, 'user.deleted', id);
+          return {
+            ok: true,
+          };
         }
       }
       fail(404, 'Admin endpoint not found.');
