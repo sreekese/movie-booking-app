@@ -25,6 +25,7 @@ test('upgrade backs up a legacy database and preserves existing accounts, bookin
     execFileSync(process.execPath, ['scripts/migrate.mjs'], {
       env: {
         ...process.env,
+        DATABASE_URL: '',
         DATABASE_PATH: dbPath,
         ADMIN_EMAIL: 'legacy@example.com',
       },
@@ -69,7 +70,12 @@ test('upgrade backs up a legacy database and preserves existing accounts, bookin
     );
     backup.close();
     execFileSync(process.execPath, ['scripts/migrate.mjs'], {
-      env: { ...process.env, DATABASE_PATH: dbPath, ADMIN_EMAIL: '' },
+      env: {
+        ...process.env,
+        DATABASE_URL: '',
+        DATABASE_PATH: dbPath,
+        ADMIN_EMAIL: '',
+      },
       stdio: 'pipe',
     });
     const reopened = new DatabaseSync(dbPath, { readOnly: true });

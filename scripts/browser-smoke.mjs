@@ -16,7 +16,10 @@ import { createApp } from '../server/app.mjs';
 
 // Exercise either the production build or Vite's development transforms.
 const dir = mkdtempSync(join(tmpdir(), 'quickshow-browser-'));
-const server = createApp({ dbPath: join(dir, 'browser.sqlite') });
+const server = await createApp({
+  dbPath: join(dir, 'browser.sqlite'),
+  databaseUrl: null,
+});
 const fixture = new DatabaseSync(join(dir, 'browser.sqlite'));
 fixture
   .prepare('INSERT INTO users(name,email,password,role) VALUES(?,?,?,?)')
@@ -46,6 +49,7 @@ if (process.argv.includes('--dev')) {
         PORT: String(apiPort),
         HOST: '127.0.0.1',
         DATABASE_PATH: join(dir, 'browser.sqlite'),
+        DATABASE_URL: '',
         NO_COLOR: '1',
       },
       stdio: ['ignore', 'pipe', 'pipe'],

@@ -9,6 +9,7 @@ export default defineConfig([
   {
     files: [
       'server/**/*.mjs',
+      'api/**/*.mjs',
       'tests/**/*.mjs',
       'scripts/**/*.mjs',
       'vite.config.js',

@@ -1,3 +1,7 @@
+# Vercel deployment
+
+See [VERCEL.md](./VERCEL.md) for PostgreSQL, Blob storage, data import, and deployment setup. Vercel deployments require `DATABASE_URL`; local development can still use SQLite.
+
 # Quick Show
 
 A full-stack movie reservation application built with React, Vite, a Node.js HTTP API, and SQLite. Payment integration is intentionally excluded. Reservations are explicitly unpaid and are not admission tickets.

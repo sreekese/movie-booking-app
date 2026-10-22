@@ -25,7 +25,7 @@ export async function api(path, options = {}) {
   if (!data || typeof data !== 'object') {
     throw Object.assign(
       new Error(
-        'The booking service is unavailable. If running locally, restart the app with npm run dev.',
+        'The booking service is unavailable. Check the server connection or deployment configuration.',
       ),
       { status: response.status },
     );

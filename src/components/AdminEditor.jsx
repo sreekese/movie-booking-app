@@ -1,3 +1,4 @@
+import { api } from '../api';
 import { useEffect, useRef, useState } from 'react';
 import { X } from 'lucide-react';
 const blankMovie = {
@@ -48,6 +49,36 @@ export default function AdminEditor({
     node.showModal();
     return () => node.close();
   }, []);
+  const upload = async (event, name) => {
+    const file = event.target.files?.[0];
+    const form = event.target.form;
+    if (!file) return;
+    setBusy(true);
+    setError('');
+    try {
+      if (
+        file.size > 2 * 1024 * 1024 ||
+        !['image/png', 'image/jpeg', 'image/webp'].includes(file.type)
+      )
+        throw new Error('Choose a PNG, JPEG, or WebP image up to 2 MB.');
+      const encoded = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result.split(',')[1]);
+        reader.onerror = () => reject(new Error('Could not read the image.'));
+        reader.readAsDataURL(file);
+      });
+      const result = await api('/admin/uploads', {
+        method: 'POST',
+        body: { data: encoded, contentType: file.type },
+      });
+      form.elements.namedItem(name).value = result.url;
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+      event.target.value = '';
+    }
+  };
   const submit = async (event) => {
     event.preventDefault();
     setBusy(true);
@@ -189,6 +220,14 @@ export default function AdminEditor({
                 value={data.poster}
                 maxLength={2000}
               />
+              <label>
+                Upload poster (PNG, JPEG, WebP, up to 2 MB)
+                <input
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp"
+                  onChange={(e) => upload(e, 'poster')}
+                />
+              </label>
               <Field
                 label="Banner image URL (HTTPS)"
                 name="banner"
@@ -196,6 +235,14 @@ export default function AdminEditor({
                 value={data.banner}
                 maxLength={2000}
               />
+              <label>
+                Upload banner (PNG, JPEG, WebP, up to 2 MB)
+                <input
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp"
+                  onChange={(e) => upload(e, 'banner')}
+                />
+              </label>
               <Field
                 label="Trailer URL (optional, HTTPS)"
                 name="trailer"

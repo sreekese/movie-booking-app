@@ -1,3 +1,7 @@
+import { openDatabase } from '../server/database.mjs';
+import { importSqlite } from '../server/import-sqlite.mjs';
+import pg from 'pg';
+import { randomBytes } from 'node:crypto';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -6,19 +10,56 @@ import { join } from 'node:path';
 import { createApp } from '../server/app.mjs';
 
 const instant = new Date('2026-10-11T00:00:00Z');
-async function setup(t) {
+async function setup(t, appOptions = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'quickshow-'));
   const dbPath = join(dir, 'test.sqlite');
+  let databaseUrl = null;
+  let adminPool;
+  let schema;
+  if (process.env.TEST_DATABASE_URL) {
+    schema = 'test_' + randomBytes(8).toString('hex');
+    adminPool = new pg.Pool({
+      connectionString: process.env.TEST_DATABASE_URL,
+    });
+    await adminPool.query(`CREATE SCHEMA ${schema}`);
+    const url = new URL(process.env.TEST_DATABASE_URL);
+    url.searchParams.set('options', `-c search_path=${schema}`);
+    databaseUrl = url.toString();
+    const seed = await createApp({
+      dbPath,
+      databaseUrl: null,
+      now: () => instant,
+    });
+    await new Promise((resolve) => seed.close(resolve));
+    await seed.databaseClosed;
+    const db = await openDatabase({ databaseUrl });
+    try {
+      await importSqlite(db, dbPath);
+    } finally {
+      await db.close();
+    }
+  }
   let server;
   let base;
   async function start(options = {}) {
-    server = createApp({ dbPath, now: () => instant, ...options });
+    server = await createApp({
+      dbPath,
+      databaseUrl,
+      now: () => instant,
+      ...appOptions,
+      ...options,
+    });
     await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
     base = `http://127.0.0.1:${server.address().port}`;
   }
   await start();
   t.after(async () => {
     await new Promise((resolve) => server.close(resolve));
+    await server.databaseClosed;
+    if (adminPool) {
+      await adminPool.query(`DROP SCHEMA ${schema} CASCADE`);
+      await adminPool.end();
+    }
     rmSync(dir, { recursive: true, force: true });
   });
   const request = async (
@@ -50,6 +91,7 @@ async function setup(t) {
     register,
     restart: async (options) => {
       await new Promise((resolve) => server.close(resolve));
+      await server.databaseClosed;
       await start(options);
     },
   };
@@ -1135,4 +1177,46 @@ test('saving categories updates unbooked upcoming shows, validates prices and re
   assert.equal(changed.data.updatedShows, 0);
   assert.equal(changed.data.preservedShows, 1);
   assert.deepEqual((await request(`/shows/${show.id}`)).data.layout, layout);
+});
+
+test('only super admins can upload movie images; uploads persist hosted URLs', async (t) => {
+  let stored = 0;
+  const { request, register, restart } = await setup(t, {
+    storeImage: async (input) => {
+      stored++;
+      assert.equal(input.contentType, 'image/png');
+      return {
+        url: 'https://example.public.blob.vercel-storage.com/poster.png',
+      };
+    },
+  });
+  assert.equal(
+    (await request('/admin/uploads', { method: 'POST', body: {} })).status,
+    401,
+  );
+  const viewer = await register();
+  assert.equal(
+    (
+      await request('/admin/uploads', {
+        method: 'POST',
+        cookie: viewer.cookie,
+        body: {},
+      })
+    ).status,
+    403,
+  );
+  assert.equal(stored, 0);
+  await restart({ adminEmail: 'viewer@example.com' });
+  const login = await request('/login', {
+    method: 'POST',
+    body: { email: 'viewer@example.com', password: 'correct-horse-123' },
+  });
+  const result = await request('/admin/uploads', {
+    method: 'POST',
+    cookie: login.cookie,
+    body: { contentType: 'image/png', data: 'test' },
+  });
+  assert.equal(result.status, 201);
+  assert.match(result.data.url, /blob.vercel-storage.com/);
+  assert.equal(stored, 1);
 });

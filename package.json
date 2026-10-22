@@ -17,11 +17,16 @@
     "test:browser": "npm run build && node scripts/browser-smoke.mjs",
     "dev:client": "vite",
     "test:browser:dev": "node scripts/browser-smoke.mjs --dev",
-    "db:migrate": "node --env-file-if-exists=.env scripts/migrate.mjs"
+    "db:migrate": "node --env-file-if-exists=.env scripts/migrate.mjs",
+    "db:import": "node --env-file-if-exists=.env scripts/import-postgres.mjs",
+    "db:admin": "node --env-file-if-exists=.env scripts/provision-admin.mjs",
+    "test:postgres": "node scripts/test-postgres.mjs"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.3.3",
+    "@vercel/blob": "^2.8.2",
     "lucide-react": "^1.28.0",
+    "pg": "^8.23.1",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "react-hot-toast": "^2.6.0",
@@ -41,6 +46,6 @@
     "vite": "^8.2.0"
   },
   "engines": {
-    "node": ">=22.14.0"
+    "node": "22.x"
   }
 }

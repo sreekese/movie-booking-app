@@ -4,7 +4,7 @@ import { createServer } from 'vite';
 import { createApp } from '../server/app.mjs';
 
 const port = Number(process.env.PORT || 3001);
-const api = createApp({
+const api = await createApp({
   dbPath: process.env.DATABASE_PATH || 'server/data/quickshow.sqlite',
   adminEmail: process.env.ADMIN_EMAIL,
   origin: process.env.APP_ORIGIN,

@@ -1,0 +1,18 @@
+export const schema = `
+CREATE TABLE IF NOT EXISTS migrations(name TEXT PRIMARY KEY);
+CREATE TABLE IF NOT EXISTS users(id BIGSERIAL PRIMARY KEY,name TEXT NOT NULL,email TEXT NOT NULL UNIQUE,password TEXT NOT NULL,role TEXT NOT NULL DEFAULT 'customer');
+CREATE TABLE IF NOT EXISTS sessions(token TEXT PRIMARY KEY,user_id BIGINT REFERENCES users(id),expires BIGINT NOT NULL);
+CREATE TABLE IF NOT EXISTS movies(id BIGSERIAL PRIMARY KEY,data TEXT NOT NULL,archived INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE IF NOT EXISTS theatres(id BIGSERIAL PRIMARY KEY,name TEXT NOT NULL,city TEXT NOT NULL,address TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS shows(id TEXT PRIMARY KEY,movie_id BIGINT NOT NULL,date TEXT NOT NULL,time TEXT NOT NULL,starts_at TEXT NOT NULL,active INTEGER NOT NULL DEFAULT 1,screen TEXT NOT NULL DEFAULT '1',theatre_id BIGINT REFERENCES theatres(id),layout TEXT,layout_version INTEGER NOT NULL DEFAULT 1);
+CREATE INDEX IF NOT EXISTS shows_theatre_screen ON shows(theatre_id,screen);
+CREATE TABLE IF NOT EXISTS bookings(id TEXT PRIMARY KEY,user_id BIGINT REFERENCES users(id),show_id TEXT REFERENCES shows(id),seats TEXT NOT NULL,total INTEGER NOT NULL,status TEXT NOT NULL DEFAULT 'reserved',created_at TEXT NOT NULL,snapshot TEXT);
+CREATE TABLE IF NOT EXISTS seats(show_id TEXT REFERENCES shows(id),seat TEXT,booking_id TEXT REFERENCES bookings(id),PRIMARY KEY(show_id,seat));
+CREATE TABLE IF NOT EXISTS favourites(user_id BIGINT REFERENCES users(id),movie_id BIGINT,PRIMARY KEY(user_id,movie_id));
+CREATE TABLE IF NOT EXISTS audit_log(id BIGSERIAL PRIMARY KEY,actor_id BIGINT,action TEXT NOT NULL,entity_id TEXT NOT NULL,created_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS theatre_admins(user_id BIGINT REFERENCES users(id) ON DELETE CASCADE,theatre_id BIGINT REFERENCES theatres(id) ON DELETE CASCADE,PRIMARY KEY(user_id,theatre_id));
+CREATE TABLE IF NOT EXISTS screens(id BIGSERIAL PRIMARY KEY,theatre_id BIGINT NOT NULL REFERENCES theatres(id),name TEXT NOT NULL,layout TEXT NOT NULL,version INTEGER NOT NULL DEFAULT 1);
+CREATE UNIQUE INDEX IF NOT EXISTS screens_theatre_name ON screens(theatre_id,lower(name));
+CREATE TABLE IF NOT EXISTS rate_limits(key TEXT PRIMARY KEY,count INTEGER NOT NULL,expires BIGINT NOT NULL);
+INSERT INTO migrations(name) VALUES ('catalogue-v1'),('theatres-v1'),('screen-access-v1'),('postgres-v1') ON CONFLICT DO NOTHING;
+`;

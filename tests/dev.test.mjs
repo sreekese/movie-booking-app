@@ -23,6 +23,7 @@ test(
       {
         env: {
           ...process.env,
+          DATABASE_URL: '',
           PORT: String(port),
           HOST: '127.0.0.1',
           DATABASE_PATH: join(dir, 'test.sqlite'),
