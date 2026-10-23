@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { ArrowRight, Ticket, Armchair, CalendarDays } from 'lucide-react';
 import CatalogueState from '../components/CatalogueState';
 import MovieCard from '../components/MovieCard';
+import MovieBanner from '../components/MovieBanner';
 export default function Home() {
   const { movies, catalogueLoading, catalogueError } = useApp();
   const movie = movies[0];
@@ -16,44 +17,7 @@ export default function Home() {
     );
   return (
     <>
-      <section
-        className="hero"
-        style={{
-          backgroundImage: `linear-gradient(90deg, #090d16 5%, #090d16b8 50%, #090d1630), linear-gradient(0deg, #090d16, transparent 65%), url(${movie.banner})`,
-        }}
-      >
-        <div className="hero-content">
-          <p className="eyebrow accent">THE BIG SCREEN IS CALLING</p>
-          <span className="pill">The classics, back in cinemas</span>
-          <h1>
-            Some stories deserve
-            <br />a bigger screen.
-          </h1>
-          <p className="hero-title">{movie.title}</p>
-          <p className="muted">
-            {movie.genre.join(' · ')} <span className="dot">•</span>{' '}
-            {movie.duration} <span className="dot">•</span> {movie.certificate}
-          </p>
-          <p className="hero-description">
-            Assemble your people. Pick your seats. Rediscover the films you
-            love, the way they were meant to be seen.
-          </p>
-          <div className="actions">
-            <Link className="button" to={`/movies/${movie.id}`}>
-              Book your experience <ArrowRight size={18} />
-            </Link>
-            <Link className="button secondary" to="/movies">
-              Explore movies
-            </Link>
-          </div>
-        </div>
-        <div className="hero-caption">
-          <span className="accent">
-            01 / {String(movies.length).padStart(2, '0')}
-          </span>{' '}
-          &nbsp; SPOTLIGHT COLLECTION
-        </div>
-      </section>
+      <MovieBanner movies={movies} />
       <section className="container section">
         <div className="section-heading">
           <div>
