@@ -269,6 +269,11 @@ main {
   letter-spacing: 0.16em;
   color: #a6acba;
 }
+.hero-caption {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
 .section-heading {
   display: flex;
   align-items: center;
