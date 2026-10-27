@@ -1,3 +1,4 @@
+import QRCode from 'qrcode';
 import { money } from '../api.js';
 import { ticketPricing } from './ticketPricing.js';
 
@@ -23,6 +24,23 @@ function wrap(value, limit) {
   }
   return lines;
 }
+// Encode only the reference: a QR is not proof of payment or admission.
+function reservationQr(reference, x, y) {
+  const { modules } = QRCode.create(String(reference), {
+    errorCorrectionLevel: 'M',
+  });
+  const quietZone = 4;
+  const size = modules.size + quietZone * 2;
+  const paths = [];
+  for (let row = 0; row < modules.size; row++) {
+    for (let column = 0; column < modules.size; column++) {
+      if (modules.get(row, column))
+        paths.push(`M${column + quietZone} ${row + quietZone}h1v1h-1z`);
+    }
+  }
+  return `<svg x="${x}" y="${y}" width="180" height="180" viewBox="0 0 ${size} ${size}" aria-label="Reservation reference QR code" shape-rendering="crispEdges"><rect width="${size}" height="${size}" fill="#fff"/><path d="${paths.join('')}" fill="#000"/></svg>`;
+}
+
 export function ticketSvg(booking) {
   const cancelled = booking.status === 'cancelled';
   const title = wrap(booking.movie.title, 32);
@@ -44,7 +62,8 @@ export function ticketSvg(booking) {
     85,
   );
   const billingY = detailsY + 305 + venueLines.length * 20;
-  const height = billingY + 100 + breakdown.length * 30;
+  const qrY = billingY + 35 + breakdown.length * 30;
+  const height = qrY + 270;
   const text = (x, y, value, size = 18, fill = '#162032', weight = 400) =>
     `<text x="${x}" y="${y}" font-size="${size}" fill="${fill}" font-weight="${weight}">${escape(value)}</text>`;
   const field = (x, y, label, value) =>
@@ -84,6 +103,12 @@ export function ticketSvg(booking) {
       ${text(530, billingY - 12, 'QUANTITY × RATE', 11, '#667085', 700)}
       ${text(830, billingY - 12, 'AMOUNT', 11, '#667085', 700)}
       ${breakdown.map((line, i) => text(40, billingY + 17 + i * 30, line.label, 15) + text(530, billingY + 17 + i * 30, line.quantity === null ? '—' : `${line.quantity} × ${money(line.rate)}`, 15) + text(830, billingY + 17 + i * 30, money(line.amount), 16, '#162032', 600)).join('')}
+      <path d="M40 ${qrY - 15}H960" stroke="#e2e8f0"/>
+      ${reservationQr(booking.id, 40, qrY)}
+      ${text(245, qrY + 50, 'RESERVATION QR CODE', 12, '#667085', 700)}
+      ${text(245, qrY + 82, booking.id, 20, '#162032', 700)}
+      ${text(245, qrY + 112, 'Scan to read your reservation reference.', 15, '#667085')}
+      ${text(245, qrY + 138, cancelled ? 'Cancelled reservation. Not valid for admission.' : 'Reference only. Check current status in My bookings.', 14, '#667085')}
       <path d="M40 ${height - 73}H960" stroke="#e2e8f0"/>
       ${text(40, height - 43, 'NOT VALID FOR ADMISSION', 12, '#a12842', 700)}
       ${text(40, height - 22, cancelled ? 'This reservation was cancelled. The listed seats are no longer reserved.' : 'Unpaid development preview. View the latest reservation status in My bookings.', 12, '#667085')}
